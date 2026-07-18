@@ -1,0 +1,15 @@
+{
+  "name": "@relay/typescript-config",
+  "version": "0.0.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "files": [
+    "*.json"
+  ],
+  "exports": {
+    "./base.json": "./base.json",
+    "./browser-library.json": "./browser-library.json",
+    "./node.json": "./node.json",
+    "./nest.json": "./nest.json"
+  }
+}

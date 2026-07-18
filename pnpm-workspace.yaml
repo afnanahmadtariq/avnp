@@ -1,0 +1,31 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+autoInstallPeers: true
+engineStrict: true
+preferWorkspacePackages: true
+strictPeerDependencies: true
+
+# Relay is a private, trusted-source workspace. Trusting its committed lockfile
+# avoids re-verifying every registry attestation during local installs.
+trustLockfile: true
+
+overrides:
+  oxc-parser: 0.140.0
+
+allowBuilds:
+  "@parcel/watcher": true
+  "@prisma/engines": true
+  esbuild: true
+  prisma: true
+  sharp: true
+  unrs-resolver: true
+
+minimumReleaseAgeExclude:
+  - "@nuxt/kit@4.5.0"
+  - "@nuxt/nitro-server@4.5.0"
+  - "@nuxt/schema@4.5.0"
+  - "@nuxt/vite-builder@4.5.0"
+  - happy-dom@20.11.0
+  - nuxt@4.5.0

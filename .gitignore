@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build and task outputs
+.turbo/
+.nuxt/
+.output/
+out/
+build/
+dist/
+coverage/
+*.tsbuildinfo
+packages/database/src/generated/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+
+# Local service data
+.data/
+tmp/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Hosting and editors
+.vercel/
+.netlify/
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Operating system metadata
+.DS_Store
+Thumbs.db

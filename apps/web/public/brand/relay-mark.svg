@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-labelledby="title description">
+  <title id="title">Relay mark</title>
+  <desc id="description">A geometric R built as a connected relay path.</desc>
+  <rect width="64" height="64" rx="19" fill="#101114" />
+  <path d="M20 46V18h13.25C39.74 18 44 21.82 44 27.5S39.74 37 33.25 37H20" fill="none" stroke="#F5F4EF" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M32 37l11 10" fill="none" stroke="#F5F4EF" stroke-width="5" stroke-linecap="round" />
+  <circle cx="20" cy="18" r="3.25" fill="#86E6B3" />
+  <circle cx="44" cy="47" r="3.25" fill="#3157F6" />
+</svg>

@@ -1,0 +1,41 @@
+{
+  "name": "@relay/database",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "UNLICENSED",
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "prisma"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "corepack pnpm run db:generate && tsc -p tsconfig.build.json",
+    "db:format": "prisma format",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:validate": "prisma validate",
+    "lint": "eslint . --max-warnings 0",
+    "typecheck": "corepack pnpm run db:generate && tsc --noEmit"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "7.8.0",
+    "@prisma/client": "7.8.0",
+    "pg": "8.22.0"
+  },
+  "devDependencies": {
+    "@relay/eslint-config": "workspace:*",
+    "@relay/typescript-config": "workspace:*",
+    "@types/node": "24.13.3",
+    "@types/pg": "8.20.0",
+    "eslint": "10.7.0",
+    "prisma": "7.8.0",
+    "typescript": "6.0.3"
+  }
+}

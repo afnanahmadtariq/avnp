@@ -1,0 +1,238 @@
+:root {
+  color-scheme: light;
+  --relay-bg: #f5f4ef;
+  --relay-brand-mint: #86e6b3;
+  --relay-surface: #ffffff;
+  --relay-text: #101114;
+  --relay-muted: #666a73;
+  --relay-border: #e5e3dc;
+  --relay-border-strong: #d4d1c8;
+  --relay-accent: #3157f6;
+  --relay-accent-soft: #eef1ff;
+  --relay-success: #16835c;
+  --relay-success-soft: #eaf9f1;
+  --relay-warning: #b86c0d;
+  --relay-warning-soft: #fff6e4;
+  --relay-radius-sm: 10px;
+  --relay-radius-md: 16px;
+  --relay-radius-lg: 24px;
+  --relay-shadow-card:
+    0 1px 2px rgb(15 23 42 / 4%), 0 12px 38px rgb(15 23 42 / 5%);
+}
+
+.relay-button {
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-size: 0.925rem;
+  font-weight: 550;
+  height: 46px;
+  justify-content: center;
+  padding: 0 20px;
+  transition:
+    transform 180ms ease,
+    background-color 180ms ease,
+    border-color 180ms ease;
+}
+
+.relay-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.relay-button:focus-visible {
+  outline: 3px solid rgb(37 99 235 / 22%);
+  outline-offset: 2px;
+}
+
+.relay-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.relay-button--primary {
+  background: var(--relay-text);
+  color: white;
+}
+
+.relay-button--primary:hover:not(:disabled) {
+  background: #242424;
+}
+
+.relay-button--secondary {
+  background: var(--relay-surface);
+  border-color: var(--relay-border-strong);
+  color: var(--relay-text);
+}
+
+.relay-card {
+  background: var(--relay-surface);
+  border: 1px solid var(--relay-border);
+  border-radius: var(--relay-radius-md);
+  box-shadow: var(--relay-shadow-card);
+  padding: 24px;
+}
+
+.relay-eyebrow {
+  color: var(--relay-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.11em;
+  margin: 0 0 10px;
+  text-transform: uppercase;
+}
+
+.relay-card__title {
+  font-size: 1.05rem;
+  font-weight: 560;
+  letter-spacing: -0.018em;
+  margin: 0 0 18px;
+}
+
+.relay-kpi {
+  background: var(--relay-surface);
+  border: 1px solid var(--relay-border);
+  border-radius: var(--relay-radius-md);
+  display: flex;
+  flex-direction: column;
+  min-height: 132px;
+  padding: 20px;
+}
+
+.relay-kpi--positive {
+  background: var(--relay-success-soft);
+  border-color: #d7eee1;
+}
+
+.relay-kpi--warning {
+  background: var(--relay-warning-soft);
+  border-color: #f3e5be;
+}
+
+.relay-kpi__label,
+.relay-kpi__detail {
+  color: var(--relay-muted);
+  font-size: 0.78rem;
+}
+
+.relay-kpi__value {
+  font-size: clamp(1.6rem, 3vw, 2.15rem);
+  font-weight: 520;
+  letter-spacing: -0.05em;
+  margin: 11px 0 8px;
+}
+
+.relay-status {
+  align-items: center;
+  border: 1px solid var(--relay-border);
+  border-radius: 999px;
+  color: var(--relay-muted);
+  display: inline-flex;
+  font-size: 0.76rem;
+  gap: 7px;
+  padding: 6px 10px;
+}
+
+.relay-status__dot {
+  background: currentColor;
+  border-radius: 50%;
+  height: 6px;
+  width: 6px;
+}
+
+.relay-status--active {
+  background: var(--relay-accent-soft);
+  border-color: #dce8ff;
+  color: var(--relay-accent);
+}
+
+.relay-status--complete {
+  background: var(--relay-success-soft);
+  border-color: #d7eee1;
+  color: var(--relay-success);
+}
+
+.relay-status--warning {
+  background: var(--relay-warning-soft);
+  border-color: #f3e5be;
+  color: #9a5600;
+}
+
+.relay-workflow {
+  display: grid;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.relay-workflow__item {
+  align-items: center;
+  display: grid;
+  gap: 13px;
+  grid-template-columns: 34px 1fr;
+  min-height: 52px;
+  padding: 5px 0;
+}
+
+.relay-workflow__item strong,
+.relay-workflow__item small {
+  display: block;
+}
+
+.relay-workflow__item strong {
+  font-size: 0.9rem;
+  font-weight: 540;
+  margin-bottom: 3px;
+}
+
+.relay-workflow__item small {
+  color: var(--relay-muted);
+  font-size: 0.77rem;
+}
+
+.relay-workflow__marker {
+  align-items: center;
+  border: 1px solid var(--relay-border-strong);
+  border-radius: 50%;
+  color: var(--relay-muted);
+  display: inline-flex;
+  font-size: 0.72rem;
+  height: 30px;
+  justify-content: center;
+  width: 30px;
+}
+
+.relay-workflow__marker--complete {
+  background: var(--relay-success-soft);
+  border-color: #caead8;
+  color: var(--relay-success);
+}
+
+.relay-workflow__marker--current {
+  background: var(--relay-accent);
+  border-color: var(--relay-accent);
+  box-shadow: 0 0 0 5px var(--relay-accent-soft);
+  color: white;
+}
+
+.relay-sr-only {
+  border: 0;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  padding: 0;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .relay-button {
+    transition: none;
+  }
+}

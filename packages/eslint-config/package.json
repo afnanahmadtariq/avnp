@@ -1,0 +1,31 @@
+{
+  "name": "@relay/eslint-config",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "UNLICENSED",
+  "files": [
+    "*.js"
+  ],
+  "exports": {
+    "./base": "./base.js",
+    "./browser": "./browser.js",
+    "./node": "./node.js"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "node --check base.js && node --check browser.js && node --check node.js"
+  },
+  "dependencies": {
+    "@eslint/js": "10.0.1",
+    "eslint-plugin-turbo": "2.10.5",
+    "globals": "17.7.0",
+    "typescript-eslint": "8.64.0"
+  },
+  "peerDependencies": {
+    "eslint": "10.7.0"
+  },
+  "devDependencies": {
+    "eslint": "10.7.0"
+  }
+}

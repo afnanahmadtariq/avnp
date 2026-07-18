@@ -1,0 +1,9 @@
+{
+  "extends": "@relay/typescript-config/node.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "src",
+    "tsBuildInfoFile": "node_modules/.cache/contracts.tsbuildinfo"
+  },
+  "include": ["src/**/*.ts"]
+}

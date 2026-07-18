@@ -1,0 +1,33 @@
+{
+  "name": "relay",
+  "version": "0.0.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "description": "Relay AI voice negotiation platform monorepo",
+  "engines": {
+    "node": "24.18.0",
+    "pnpm": "11.15.0"
+  },
+  "packageManager": "pnpm@11.15.0",
+  "scripts": {
+    "build": "turbo run build",
+    "check": "corepack pnpm format:check && corepack pnpm lint && corepack pnpm typecheck && corepack pnpm test && corepack pnpm build",
+    "clean": "turbo run clean",
+    "dev": "turbo run dev",
+    "dev:api": "turbo run dev --filter=@relay/api",
+    "dev:web": "turbo run dev --filter=@relay/web",
+    "dev:worker": "turbo run dev --filter=@relay/worker",
+    "db:generate": "turbo run db:generate --filter=@relay/database",
+    "db:validate": "turbo run db:validate --filter=@relay/database",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck"
+  },
+  "devDependencies": {
+    "prettier": "3.9.5",
+    "turbo": "2.10.5",
+    "typescript": "6.0.3"
+  }
+}

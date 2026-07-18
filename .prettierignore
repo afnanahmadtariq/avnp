@@ -1,0 +1,10 @@
+.nuxt
+.output
+.turbo
+assets/brand/concepts
+coverage
+dist
+docs/references/originals
+node_modules
+pnpm-lock.yaml
+tmp
