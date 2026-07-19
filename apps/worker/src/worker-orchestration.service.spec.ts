@@ -311,20 +311,22 @@ describe("WorkerOrchestrationService", () => {
     expect(enqueue).toHaveBeenCalledTimes(2);
     const firstEnvelope = enqueue.mock.calls[0]?.[0];
     const secondEnvelope = enqueue.mock.calls[1]?.[0];
-    expect(firstEnvelope).toEqual(
-      expect.objectContaining({
-        idempotencyKey:
-          "run-1:continue:negotiation-high:round:1:quote-high:quote-low",
-        name: queueJobNames.continueNegotiation,
-        payload: {
-          currentQuoteId: "quote-high",
-          negotiationId: "negotiation-high",
-          runId: "run-1",
-          truthfulCompetingQuoteId: "quote-low",
-        },
-      }),
-    );
-    expect(secondEnvelope).toEqual(firstEnvelope);
+    const expectedFollowUp = {
+      idempotencyKey:
+        "run-1:continue:negotiation-high:round:1:quote-high:quote-low",
+      name: queueJobNames.continueNegotiation,
+      payload: {
+        currentQuoteId: "quote-high",
+        negotiationId: "negotiation-high",
+        runId: "run-1",
+        truthfulCompetingQuoteId: "quote-low",
+      },
+      requestedAt: expect.any(String),
+      traceId: "trace-1",
+      version: 1,
+    };
+    expect(firstEnvelope).toEqual(expectedFollowUp);
+    expect(secondEnvelope).toEqual(expectedFollowUp);
   });
 
   it("cancels an already-authorized live provider call once and records completion", async () => {
