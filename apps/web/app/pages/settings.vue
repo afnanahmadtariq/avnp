@@ -1,13 +1,27 @@
 <script setup lang="ts">
 import type { RelaySettings, RelaySettingsUpdate } from "~/types/api";
 
-import { onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
+import {
+  computed,
+  onBeforeUnmount,
+  onMounted,
+  reactive,
+  ref,
+  watch,
+} from "vue";
+import { onBeforeRouteLeave } from "vue-router";
 
 import { useRelayApi } from "../composables/useRelayApi";
 
 useSeoMeta({ title: "Settings and privacy · Relay" });
 
 const api = useRelayApi();
+const route = useRoute();
+const runtimeConfig = useRuntimeConfig();
+const clerkEnabled = computed(
+  () => runtimeConfig.public.authProvider === "clerk",
+);
+const activeSettingsHash = computed(() => route.hash || "#notifications");
 const exportError = ref(false);
 const exportPending = ref(false);
 const exportStatus = ref("");
@@ -161,15 +175,25 @@ onMounted(() => {
   void loadSettings();
 });
 
+onBeforeRouteLeave(async () => {
+  if (saveTimer) {
+    window.clearTimeout(saveTimer);
+    saveTimer = undefined;
+  }
+
+  if (pendingSettings && !saveInFlight) {
+    await flushSettingsSave();
+  }
+
+  return saveError.value ? false : undefined;
+});
+
 onBeforeUnmount(() => {
   if (saveTimer) {
     window.clearTimeout(saveTimer);
   }
   if (settingsFeedbackTimeout) {
     window.clearTimeout(settingsFeedbackTimeout);
-  }
-  if (pendingSettings) {
-    void flushSettingsSave();
   }
 });
 
@@ -253,10 +277,31 @@ async function downloadDataExport(): Promise<void> {
       </section>
       <div v-else-if="isLoaded" class="settings-layout">
         <nav aria-label="Settings sections" class="settings-nav">
-          <a class="settings-nav__active" href="#notifications">Notifications</a
-          ><a href="#calling">Calling and consent</a
-          ><a href="#privacy">Data and privacy</a
-          ><a href="#access">Workspace access</a>
+          <a
+            :class="{
+              'settings-nav__active': activeSettingsHash === '#notifications',
+            }"
+            href="#notifications"
+            >Notifications</a
+          ><a
+            :class="{
+              'settings-nav__active': activeSettingsHash === '#calling',
+            }"
+            href="#calling"
+            >Calling and consent</a
+          ><a
+            :class="{
+              'settings-nav__active': activeSettingsHash === '#privacy',
+            }"
+            href="#privacy"
+            >Data and privacy</a
+          ><a
+            :class="{
+              'settings-nav__active': activeSettingsHash === '#access',
+            }"
+            href="#access"
+            >Workspace access</a
+          >
         </nav>
         <div class="settings-content">
           <section id="notifications" class="settings-card">
@@ -331,10 +376,10 @@ async function downloadDataExport(): Promise<void> {
             </div>
             <div class="setting-row">
               <div>
-                <strong>AI disclosure</strong>
+                <strong>Identity disclosure</strong>
                 <p>
-                  Sara gives a brief automated-assistant introduction at the
-                  start and answers identity questions plainly.
+                  Sara introduces herself by name. If someone asks, she plainly
+                  explains that Relay uses an automated voice service.
                 </p>
               </div>
               <label class="switch"
@@ -343,7 +388,7 @@ async function downloadDataExport(): Promise<void> {
                   disabled
                   type="checkbox"
                 /><span /><span class="sr-only"
-                  >AI disclosure is always enabled</span
+                  >Truthful identity disclosure is always enabled</span
                 ></label
               >
             </div>
@@ -431,7 +476,13 @@ async function downloadDataExport(): Promise<void> {
             <header>
               <div>
                 <h2>Workspace access</h2>
-                <p>Understand how access works in this local build.</p>
+                <p>
+                  {{
+                    clerkEnabled
+                      ? "Manage the account and sessions that protect Relay."
+                      : "Understand access in this local workspace."
+                  }}
+                </p>
               </div>
             </header>
             <div class="session-row">
@@ -441,13 +492,27 @@ async function downloadDataExport(): Promise<void> {
                   <path d="M7 17h6M10 14v3" /></svg
               ></span>
               <div>
-                <strong>Local development workspace</strong>
-                <p>
-                  Authentication and remote session management are not
-                  connected. Access is limited by the machine running Relay.
+                <strong>{{
+                  clerkEnabled ? "Clerk-secured account" : "Local workspace"
+                }}</strong>
+                <p v-if="clerkEnabled">
+                  Your email, connected Google account, password, and active
+                  sessions are managed in Sign-in and security.
+                </p>
+                <p v-else>
+                  Authentication and remote session management are not enabled
+                  in this local environment.
                 </p>
               </div>
-              <StatusBadge :dot="false" tone="warning">No sign-in</StatusBadge>
+              <div class="session-actions">
+                <StatusBadge
+                  :dot="false"
+                  :tone="clerkEnabled ? 'success' : 'warning'"
+                >
+                  {{ clerkEnabled ? "Protected" : "Local only" }}
+                </StatusBadge>
+                <NuxtLink v-if="clerkEnabled" to="/account">Manage</NuxtLink>
+              </div>
             </div>
           </section>
         </div>
@@ -780,8 +845,16 @@ async function downloadDataExport(): Promise<void> {
   justify-content: start;
   gap: 11px;
 }
-.session-row :deep(.status-badge) {
+.session-actions {
+  align-items: center;
+  display: flex;
+  gap: var(--relay-space-3);
   margin-left: auto;
+}
+.session-actions a {
+  color: var(--relay-blue);
+  font-size: var(--relay-text-meta);
+  font-weight: 650;
 }
 .session-icon {
   align-items: center;
@@ -826,6 +899,13 @@ async function downloadDataExport(): Promise<void> {
   .setting-action,
   .deletion-confirmation {
     flex-direction: column;
+  }
+  .session-row {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .session-actions {
+    margin-left: 43px;
   }
   .deletion-confirmation {
     align-items: stretch;

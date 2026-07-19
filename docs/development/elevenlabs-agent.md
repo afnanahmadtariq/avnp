@@ -31,7 +31,7 @@ The worker supplies these variables in `conversation_initiation_client_data.dyna
 | `relay_business_id`               | String                    | Relay's internal target-business identifier; never read aloud                                                 |
 | `relay_business_name`             | String                    | Business being called                                                                                         |
 | `relay_callback_url`              | HTTPS URL                 | Post-call destination context; never read aloud                                                               |
-| `relay_identify_as_ai_when_asked` | Boolean, always `true`    | Minimum fallback disclosure; the prompt still discloses AI proactively                                        |
+| `relay_identify_as_ai_when_asked` | Boolean, always `true`    | Requires a direct, truthful answer whenever someone asks whether the caller is automated                      |
 | `relay_job_specification`         | JSON string               | The confirmed customer facts; this is the only job-detail source                                              |
 | `relay_locale`                    | Locale string             | Language/locale for the conversation                                                                          |
 | `relay_negotiation_strategy`      | String                    | Approved negotiation posture such as `balanced`                                                               |
@@ -55,10 +55,10 @@ The prompt must not infer a missing value, convert currencies, reinterpret minor
 Paste the following as the negotiation agent's system prompt. Preserve the variable names and safety rules when editing tone.
 
 ```text
-You are Sara, Relay's AI purchasing assistant, calling {{relay_business_name}} on behalf of a customer who asked Relay to gather and compare a moving-services quote.
+You are Sara from Relay, calling {{relay_business_name}} on behalf of a customer who asked Relay to gather and compare a moving-services quote.
 
 IDENTITY AND CONSENT
-- At the start, keep the introduction brief: say that you are Sara from Relay, an automated assistant calling for a customer. Never imply that you are the customer or a human employee.
+- At the start, keep the introduction brief: say that you are Sara from Relay, calling on behalf of a customer. Do not add an automation disclosure to the opening, but never imply that you are the customer or a human employee.
 - Before substantive quote discussion, say this recording/transcription notice exactly: {{relay_recording_disclosure}}
 - If anyone asks whether you are automated, an AI, a bot, or a recording, answer clearly and truthfully. {{relay_identify_as_ai_when_asked}} is always true.
 - If the person refuses an AI-assisted or recorded conversation, apologize, do not pressure them, and end with a clear refusal outcome.
@@ -98,7 +98,7 @@ CLOSE
 Recommended first message:
 
 ```text
-Hi, I’m Sara from Relay, an automated assistant calling for a customer. {{relay_recording_disclosure}} Is now a good time for a quick quote?
+Hi, I’m Sara from Relay, calling on behalf of a customer. {{relay_recording_disclosure}} Is now a good time for a quick quote?
 ```
 
 The configured first message must remain consistent with `relay_recording_disclosure`. If the disclosure text varies by jurisdiction, use the dynamic variable rather than hard-coding a weaker notice.
@@ -110,9 +110,9 @@ The browser creates a signed private session for an authenticated, owned draft. 
 Configure a string dynamic-variable placeholder named `relay_intake_session_id` on the intake agent. The value is an opaque, one-time server reservation: never read it aloud or use it as customer context. ElevenLabs must retain it in `conversation_initiation_client_data.dynamic_variables` so Relay can bind the finished provider conversation to the authenticated draft before accepting its transcript.
 
 ```text
-You are Sara, Relay's AI voice-intake assistant. Help the customer create a complete moving-services brief that they will review and confirm before Relay contacts any business.
+You are Sara from Relay. Help the customer create a complete moving-services brief that they will review and confirm before Relay contacts any business.
 
-- At the start, keep the introduction brief: say that you are Sara from Relay, an automated assistant, and that the conversation may be transcribed or recorded for creating the request.
+- At the start, keep the introduction brief: say that you are Sara from Relay and that the conversation may be transcribed or recorded for creating the request. Never claim to be a human employee; if asked whether the voice is automated, answer clearly and truthfully.
 - Ask one short question at a time and allow interruptions.
 - Gather only relevant facts: move origin and destination, preferred date or window, property types, bedrooms, floors, elevators, stairs, access/parking constraints, approximate inventory, unusually heavy or fragile items, packing needs, disassembly/reassembly needs, timing constraints, and any exclusions.
 - Do not guess. Mark uncertain details as uncertain and ask for clarification.
@@ -125,7 +125,7 @@ You are Sara, Relay's AI voice-intake assistant. Help the customer create a comp
 Recommended first message:
 
 ```text
-Hi, I’m Sara from Relay, an automated assistant. This conversation may be transcribed or recorded to help create your request. May I begin?
+Hi, I’m Sara from Relay. This conversation may be transcribed or recorded to help create your request. May I begin?
 ```
 
 ## Webhook configuration
@@ -176,4 +176,4 @@ Before enabling production destinations, run a controlled golden-call suite cove
 11. duplicate signed webhook, confirming idempotent HTTP 200 handling;
 12. invalid signature, confirming rejection without product-state changes.
 
-Review each transcript for proactive AI and recording disclosure, factual accuracy, complete fees, correct outcome classification, no fabricated leverage, no booking/payment commitment, graceful interruption handling, and a confirmed closing summary. One approved, consented end-to-end production call remains a launch gate.
+Review each transcript for truthful responses to identity questions, required recording disclosure, factual accuracy, complete fees, correct outcome classification, no fabricated leverage, no booking/payment commitment, graceful interruption handling, and a confirmed closing summary. One approved, consented end-to-end production call remains a launch gate.

@@ -16,14 +16,13 @@ const supportedTimezones = [
 ] as const;
 
 const api = useRelayApi();
+const route = useRoute();
 const { syncAccountIdentity } = useAccountIdentity();
 const isLoaded = ref(false);
 const isLoading = ref(true);
 const isSaving = ref(false);
 const loadError = ref("");
 const profileForm = ref<HTMLFormElement | null>(null);
-const profilePhotoName = ref("");
-const profilePhotoPreview = ref("");
 const saveError = ref(false);
 const saved = ref(false);
 const saveFeedback = ref("");
@@ -49,6 +48,14 @@ const profileInitials = computed(() => {
 
   return initials || "R";
 });
+
+const showWelcome = computed(() => route.query.welcome === "1");
+const profileDetailsReady = computed(() =>
+  Boolean(profile.value.displayName && profile.value.location),
+);
+const callingIdentityReady = computed(() =>
+  Boolean(profile.value.representedAs),
+);
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message.trim()
@@ -125,25 +132,6 @@ onBeforeUnmount(() => {
     window.clearTimeout(saveFeedbackTimeout);
   }
 });
-
-function selectProfilePhoto(event: Event): void {
-  const input = event.target as HTMLInputElement;
-  const file = input.files?.[0];
-
-  if (!file) {
-    return;
-  }
-
-  profilePhotoName.value = file.name;
-
-  const reader = new FileReader();
-  reader.addEventListener("load", () => {
-    if (typeof reader.result === "string") {
-      profilePhotoPreview.value = reader.result;
-    }
-  });
-  reader.readAsDataURL(file);
-}
 
 async function saveProfile(): Promise<void> {
   if (!profileForm.value?.reportValidity()) {
@@ -236,6 +224,17 @@ async function saveProfile(): Promise<void> {
           </span>
         </div>
       </header>
+      <section v-if="showWelcome" class="welcome-banner" role="status">
+        <span aria-hidden="true">✓</span>
+        <div>
+          <strong>Your Relay account is ready.</strong>
+          <p>
+            We imported your name and email from sign-in. Add your location and
+            calling identity before starting a request; your phone number is
+            optional.
+          </p>
+        </div>
+      </section>
       <section
         v-if="isLoading"
         aria-live="polite"
@@ -260,40 +259,14 @@ async function saveProfile(): Promise<void> {
         <section class="account-card profile-card">
           <div class="profile-identity">
             <span class="profile-avatar" aria-hidden="true">
-              <img
-                v-if="profilePhotoPreview"
-                alt=""
-                :src="profilePhotoPreview"
-              />
-              <template v-else>{{ profileInitials }}</template>
+              {{ profileInitials }}
             </span>
             <div>
               <h2>{{ profile.displayName }}</h2>
-              <p>Personal account · Relay member since July 2026</p>
-              <input
-                id="profile-photo"
-                accept="image/jpeg,image/png,image/webp"
-                aria-describedby="profile-photo-feedback"
-                class="profile-photo-input"
-                form="profile-form"
-                type="file"
-                @change="selectProfilePhoto"
-              />
-              <label class="profile-photo-action" for="profile-photo">
-                {{ profilePhotoName ? "Choose another photo" : "Choose photo" }}
-              </label>
-              <span
-                id="profile-photo-feedback"
-                aria-live="polite"
-                class="profile-photo-feedback"
-                role="status"
-              >
-                {{
-                  profilePhotoName
-                    ? `${profilePhotoName} is a local preview only and is not uploaded.`
-                    : "Preview only — photos are not uploaded or saved. JPG, PNG, or WebP."
-                }}
-              </span>
+              <p>{{ profile.email }} · Free plan</p>
+              <NuxtLink class="profile-identity__security" to="/account">
+                Manage profile photo and sign-in details
+              </NuxtLink>
             </div>
           </div>
           <form
@@ -375,12 +348,26 @@ async function saveProfile(): Promise<void> {
                 <div class="identity-preview">
                   <span>Call introduction</span>
                   <p>
-                    “Hi, I’m Sara from Relay, an automated assistant calling on
-                    behalf of <strong>{{ profile.representedAs }}</strong
-                    >.”
+                    “Hi, I’m Sara from Relay, calling on behalf of
+                    <strong>{{ profile.representedAs }}</strong> about a moving
+                    quote.”
                   </p>
+                  <small>
+                    If someone asks, Sara explains plainly that Relay uses an
+                    automated voice service.
+                  </small>
                 </div>
               </div>
+            </div>
+            <div class="profile-form-actions">
+              <button
+                class="button button--blue"
+                :disabled="isSaving"
+                type="submit"
+              >
+                {{ isSaving ? "Saving changes" : "Save changes" }}
+                <span aria-hidden="true">→</span>
+              </button>
             </div>
           </form>
         </section>
@@ -390,15 +377,23 @@ async function saveProfile(): Promise<void> {
             <dl>
               <div>
                 <dt>Profile details</dt>
-                <dd>Complete</dd>
+                <dd>
+                  {{ profileDetailsReady ? "Complete" : "Needs attention" }}
+                </dd>
               </div>
               <div>
                 <dt>Calling identity</dt>
-                <dd>Ready</dd>
+                <dd>
+                  {{ callingIdentityReady ? "Ready" : "Needs attention" }}
+                </dd>
               </div>
               <div>
                 <dt>Time zone</dt>
                 <dd>{{ profile.timezone }}</dd>
+              </div>
+              <div>
+                <dt>Plan</dt>
+                <dd>Free</dd>
               </div>
             </dl>
           </section>
@@ -421,7 +416,7 @@ async function saveProfile(): Promise<void> {
             <NuxtLink to="/settings#access">
               <span>
                 <strong>Workspace access</strong>
-                <small>Local access and sign-in status</small>
+                <small>Sessions and sign-in methods</small>
               </span>
               <span aria-hidden="true">→</span>
             </NuxtLink>
@@ -479,6 +474,36 @@ async function saveProfile(): Promise<void> {
   cursor: wait;
   opacity: 0.65;
 }
+.welcome-banner {
+  align-items: flex-start;
+  background: var(--relay-green-soft);
+  border: 1px solid #cfe9dc;
+  border-radius: 14px;
+  display: flex;
+  gap: var(--relay-space-3);
+  margin-bottom: var(--relay-space-5);
+  padding: var(--relay-space-4);
+}
+.welcome-banner > span {
+  align-items: center;
+  background: var(--relay-green);
+  border-radius: 999px;
+  color: white;
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 24px;
+  justify-content: center;
+  width: 24px;
+}
+.welcome-banner strong {
+  font-size: var(--relay-text-control);
+}
+.welcome-banner p {
+  color: var(--relay-muted);
+  font-size: var(--relay-text-meta);
+  line-height: var(--relay-leading-meta);
+  margin: var(--relay-space-1) 0 0;
+}
 .account-state {
   display: grid;
   gap: var(--relay-space-2);
@@ -530,12 +555,6 @@ async function saveProfile(): Promise<void> {
   justify-content: center;
   width: 58px;
 }
-.profile-avatar img {
-  border-radius: inherit;
-  height: 100%;
-  object-fit: cover;
-  width: 100%;
-}
 .profile-identity h2 {
   font-size: var(--relay-text-card-title);
   font-weight: 620;
@@ -546,35 +565,10 @@ async function saveProfile(): Promise<void> {
   font-size: var(--relay-text-meta);
   margin: 0 0 8px;
 }
-.profile-photo-input {
-  clip: rect(0 0 0 0);
-  clip-path: inset(50%);
-  height: 1px;
-  overflow: hidden;
-  position: absolute;
-  white-space: nowrap;
-  width: 1px;
-}
-.profile-photo-action {
-  background: none;
-  border: 0;
+.profile-identity__security {
   color: var(--relay-blue);
-  cursor: pointer;
-  font-size: var(--relay-text-control);
-  font-weight: 610;
-  padding: 0;
-}
-.profile-photo-input:focus-visible + .profile-photo-action {
-  border-radius: 4px;
-  outline: 3px solid var(--relay-blue-soft);
-  outline-offset: 3px;
-}
-.profile-photo-feedback {
-  color: var(--relay-faint);
-  display: block;
   font-size: var(--relay-text-meta);
-  margin-top: 6px;
-  max-width: 360px;
+  font-weight: 610;
 }
 .settings-section {
   border-bottom: 1px solid var(--relay-line);
@@ -583,7 +577,7 @@ async function saveProfile(): Promise<void> {
   grid-template-columns: 180px 1fr;
   padding: 25px 22px;
 }
-.settings-section:last-child {
+.settings-section:last-of-type {
   border-bottom: 0;
 }
 .settings-section h3 {
@@ -656,6 +650,16 @@ async function saveProfile(): Promise<void> {
   font-size: var(--relay-text-meta);
   line-height: 1.55;
   margin: 6px 0 0;
+}
+.identity-preview small {
+  color: var(--relay-faint);
+  display: block;
+  font-size: var(--relay-text-meta);
+  line-height: var(--relay-leading-meta);
+  margin-top: var(--relay-space-2);
+}
+.profile-form-actions {
+  display: none;
 }
 .account-aside {
   display: grid;
@@ -757,6 +761,15 @@ async function saveProfile(): Promise<void> {
   }
   .account-aside {
     grid-template-columns: 1fr;
+  }
+  .profile-form-actions {
+    border-top: 1px solid var(--relay-line);
+    display: block;
+    padding: var(--relay-space-4);
+  }
+  .profile-form-actions .button {
+    justify-content: center;
+    width: 100%;
   }
 }
 </style>

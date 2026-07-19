@@ -6,7 +6,7 @@ Last reviewed: 2026-07-19
 
 ## Primary moving journey
 
-1. **Start:** the customer starts a moving negotiation and sees the recording, calling, and AI-disclosure expectations.
+1. **Start:** the customer signs in, starts a moving negotiation, and sees the calling, recording, and truthful-identity expectations.
 2. **Interview or upload:** an ElevenLabs voice interview asks estimator-grade questions; a supported document can add inventory or prior quote facts.
 3. **Unify:** all inputs map into one structured moving specification with source and confidence metadata.
 4. **Confirm:** the customer reviews, edits, and confirms a version. Calls cannot start before this state.
@@ -30,8 +30,8 @@ Last reviewed: 2026-07-19
 
 ## Conversation trust checkpoints
 
-- State that the agent is calling for the named customer.
-- Answer “are you a robot?” honestly and continue politely.
+- Introduce the caller briefly as Sara from Relay and state that she is calling for the named customer; do not claim to be a human employee.
+- If someone asks whether the caller is automated, answer honestly and continue politely.
 - Never claim authority to book or pay unless that capability and user approval exist.
 - Use only the confirmed job facts and compatible quotes as leverage.
 - End by repeating the structured outcome and asking for any missing itemization.

@@ -134,7 +134,7 @@ Acceptance criteria:
 
 - The deterministic demo closes intake -> calls -> negotiation -> recommendation without external credentials.
 - The live-provider path uses ElevenLabs voice agents and preserves the same contracts.
-- Sara never invents inventory or competing bids, gives a brief automated-assistant introduction, and answers identity questions truthfully.
+- Sara never invents inventory or competing bids, opens with a brief name-and-purpose introduction, never claims to be a human employee, and answers identity questions truthfully when asked.
 - UI updates target under five seconds, at least three calls can progress concurrently, and transcript accuracy is measured toward 95%.
 
 ## Phase 7 - Production readiness and stretch work

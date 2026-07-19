@@ -14,6 +14,10 @@ const api = vi.hoisted(() => ({
 const accountIdentity = vi.hoisted(() => ({
   syncAccountIdentity: vi.fn(),
 }));
+const currentRoute = vi.hoisted(() => ({
+  hash: "",
+  query: {} as Record<string, string>,
+}));
 
 vi.mock("../composables/useRelayApi", () => ({
   useRelayApi: () => api,
@@ -58,7 +62,13 @@ const settings = {
 };
 
 beforeEach(() => {
+  currentRoute.hash = "";
+  currentRoute.query = {};
   vi.stubGlobal("useSeoMeta", vi.fn());
+  vi.stubGlobal("useRoute", () => currentRoute);
+  vi.stubGlobal("useRuntimeConfig", () => ({
+    public: { authProvider: "clerk" },
+  }));
   api.getProfile.mockResolvedValue(profile);
   api.getSettings.mockResolvedValue(settings);
   api.updateProfile.mockImplementation(async (value) => ({
@@ -87,6 +97,11 @@ describe("account pages", () => {
       wrapper.get('input[autocomplete="email"]').attributes("readonly"),
     ).toBeDefined();
     expect(wrapper.text()).toContain("Manage sign-in details");
+    expect(wrapper.text()).toContain("Free plan");
+    expect(wrapper.text()).toContain(
+      "Manage profile photo and sign-in details",
+    );
+    expect(wrapper.text()).not.toContain("automated assistant calling");
 
     await wrapper
       .get<HTMLInputElement>('input[autocomplete="name"]')
@@ -141,6 +156,17 @@ describe("account pages", () => {
     );
   });
 
+  it("explains first-run profile setup without requiring a phone", async () => {
+    currentRoute.query = { welcome: "1" };
+    const wrapper = mount(ProfilePage, {
+      global: { stubs: globalComponents },
+    });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("Your Relay account is ready.");
+    expect(wrapper.text()).toContain("your phone number is optional");
+  });
+
   it("does not save an invalid populated customer contact phone", async () => {
     const wrapper = mount(ProfilePage, {
       global: { stubs: globalComponents },
@@ -181,5 +207,7 @@ describe("account pages", () => {
       evidenceRetentionDays: settings.evidenceRetentionDays,
       recordingConsentDefault: settings.recordingConsentDefault,
     });
+    expect(wrapper.text()).toContain("Clerk-secured account");
+    expect(wrapper.text()).toContain("Protected");
   });
 });

@@ -31,7 +31,7 @@ Requirement identifiers are stable and should be referenced by code, tests, task
 
 - **FR-CALL-001:** The system can run at least three calls concurrently or as parallel provider sessions.
 - **FR-CALL-002:** The agent describes the confirmed job consistently while handling interruptions, vague answers, refusals, callbacks, and hard selling.
-- **FR-CALL-003:** Sara gives a brief introduction as Relay's automated assistant, states who she represents, and answers follow-up identity questions truthfully.
+- **FR-CALL-003:** Sara gives a brief name-and-purpose introduction, states who she represents, never claims to be a human employee, and answers identity questions truthfully when asked.
 - **FR-CALL-004:** The agent never invents job facts, competing bids, or commitments.
 - **FR-CALL-005:** Each call ends as an itemized quote, callback commitment, or documented decline.
 - **FR-CALL-006:** Every provider webhook is authenticated where supported and processed idempotently.
@@ -68,7 +68,7 @@ Requirement identifiers are stable and should be referenced by code, tests, task
 - **NFR-QUAL-001:** Transcript accuracy is measured against a target of 95%; confidence and manual review remain available.
 - **NFR-REL-001:** Long-running work is durable, retryable, idempotent, and separate from HTTP request lifetimes.
 - **NFR-SEC-001:** Secrets never enter browser bundles, source control, fixtures, transcripts, or logs.
-- **NFR-PRIV-001:** Recording consent, AI disclosure, access, and retention are explicit product states.
+- **NFR-PRIV-001:** Recording consent, truthful identity disclosure, access, and retention are explicit product states.
 - **NFR-OBS-001:** Jobs, calls, webhooks, quotes, and negotiation attempts share correlation identifiers.
 - **NFR-DEV-001:** Build, lint, typecheck, unit test, and scaffold demo paths require no paid-provider credentials.
 - **NFR-EXT-001:** A new vertical can supply fields, fee taxonomy, benchmarks, red flags, and levers without modifying core orchestration.

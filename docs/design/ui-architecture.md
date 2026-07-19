@@ -23,24 +23,28 @@ Booking and payment are deliberately excluded from the MVP. Relay can save a dec
 
 ## Required UI inventory
 
-### Public
+### Public and authentication
 
-| Route    | Screen        | Primary job                          |
-| -------- | ------------- | ------------------------------------ |
-| `/`      | Product home  | Understand Relay and begin a request |
-| `/start` | Guided intake | Create a structured draft            |
+| Route         | Screen         | Primary job                                     |
+| ------------- | -------------- | ----------------------------------------------- |
+| `/`           | Product home   | Understand Relay and begin a request            |
+| `/sign-in/**` | Sign in        | Authenticate and return to the requested screen |
+| `/sign-up/**` | Create account | Create an account and continue to profile setup |
 
 ### Product
 
-| Route                           | Screen               | Primary job                                                                 |
-| ------------------------------- | -------------------- | --------------------------------------------------------------------------- |
-| `/dashboard`                    | Requests dashboard   | See active and completed requests, savings, and next actions                |
-| `/requests/RLY-2048/review`     | Brief review         | Edit and confirm the exact specification used for calls                     |
-| `/requests/RLY-2048/businesses` | Business approval    | Approve eligible businesses before outbound calls                           |
-| `/workspace`                    | Live run             | Follow calls, quotes, evidence, and milestones                              |
-| `/requests/RLY-2048/report`     | Final report         | Compare ranked offers and inspect the recommendation                        |
-| `/profile`                      | Profile              | Maintain customer identity and default contact details                      |
-| `/settings`                     | Settings and privacy | Control notifications, calling consent, evidence retention, and data access |
+| Route                      | Screen               | Primary job                                                                 |
+| -------------------------- | -------------------- | --------------------------------------------------------------------------- |
+| `/start`                   | Guided intake        | Create a structured draft after authentication                              |
+| `/dashboard`               | Requests dashboard   | See active and completed requests, savings, and next actions                |
+| `/requests/:id`            | Request resolver     | Resume an owned request at its correct next step                            |
+| `/requests/:id/review`     | Brief review         | Edit and confirm the exact specification used for calls                     |
+| `/requests/:id/businesses` | Business approval    | Approve eligible businesses before outbound calls                           |
+| `/requests/:id/workspace`  | Live run             | Follow calls, quotes, evidence, and milestones                              |
+| `/requests/:id/report`     | Final report         | Compare ranked offers, inspect evidence, and save the selected decision     |
+| `/profile`                 | Profile              | Complete customer identity and optional contact details                     |
+| `/account/**`              | Sign-in and security | Manage email, password, social accounts, profile photo, and active sessions |
+| `/settings`                | Settings and privacy | Control notifications, calling consent, evidence retention, and data access |
 
 ## Navigation model
 
@@ -73,11 +77,23 @@ Home
 ## Recovery flows
 
 - A user correction creates a new specification version before more calls run.
+- An interrupted upload or voice intake resumes at intake until its specification is complete.
+- A stale or unknown request link returns to the owned request list instead of looping on retry.
+- A partially successful discovery explains what is missing and provides a retry or brief-correction path.
 - A callback remains visible with an expected follow-up time.
 - A declined or failed call remains visible in the run.
 - Missing fees remain marked unresolved instead of displaying as zero.
 - A suspicious low quote receives a visible risk warning and cannot silently become the winner.
-- Settings make recording consent, AI disclosure, evidence retention, and data access explicit.
+- Failed and cancelled runs provide a start-over path.
+- Settings make recording consent, truthful identity disclosure, evidence retention, and data access explicit.
+
+## Account lifecycle
+
+1. A new account returns from Clerk to `/profile?welcome=1`.
+2. Relay imports the authoritative name and email from the authentication profile.
+3. The customer adds a location and calling identity; a personal phone number remains optional.
+4. The free plan is the only customer tier exposed in the current product.
+5. Email, password, connected Google accounts, profile photo, and sessions remain managed at `/account/**`.
 
 ## UX requirements
 
