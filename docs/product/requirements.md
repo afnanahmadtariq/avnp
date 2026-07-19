@@ -17,7 +17,7 @@ Requirement identifiers are stable and should be referenced by code, tests, task
 
 ## Business discovery
 
-- **FR-DIS-001:** The system can discover moving businesses by location and radius from a provider such as Google Places or Yelp.
+- **FR-DIS-001:** The system can discover moving businesses by location and radius through Google Places API (New).
 - **FR-DIS-002:** Each candidate includes a name, phone number, location, rating, review count, and discovery source when available.
 - **FR-DIS-003:** The user or system can filter businesses that cannot serve the job or lack a callable number.
 - **FR-DIS-004:** Credential-free development uses deterministic candidate fixtures through the same contract.

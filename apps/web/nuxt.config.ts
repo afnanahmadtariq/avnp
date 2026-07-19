@@ -1,8 +1,19 @@
+import type { ModuleOptions as ClerkModuleOptions } from "@clerk/nuxt";
 import { defineNuxtConfig } from "nuxt/config";
 
 const clerkEnabled = Boolean(
+  process.env.AUTH_PROVIDER?.trim().toLowerCase() === "clerk" &&
   process.env.NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY?.trim(),
 );
+
+const clerkModule: [string, ClerkModuleOptions] = [
+  "@clerk/nuxt",
+  {
+    // NestJS owns bearer-token verification. Skipping Nuxt's server middleware
+    // keeps browser and API auth responsibilities clear.
+    skipServerMiddleware: true,
+  },
+];
 
 export default defineNuxtConfig({
   app: {
@@ -49,13 +60,12 @@ export default defineNuxtConfig({
       );
     },
   },
-  modules: ["@nuxt/eslint", ...(clerkEnabled ? ["@clerk/nuxt"] : [])],
+  modules: ["@nuxt/eslint", ...(clerkEnabled ? [clerkModule] : [])],
   runtimeConfig: {
-    clerk: {
-      secretKey: process.env.CLERK_SECRET_KEY,
-    },
     public: {
-      apiBase: "http://localhost:4000/api/v1",
+      apiBase:
+        process.env.NUXT_PUBLIC_API_BASE?.trim() ||
+        "http://localhost:4000/api/v1",
       authProvider: clerkEnabled ? "clerk" : "local",
       clerk: {
         publishableKey: process.env.NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY,

@@ -24,6 +24,8 @@ import { ProviderCompositionService } from "../providers/provider-composition.se
 import { ProductService } from "./product.service.js";
 
 const MAXIMUM_DOCUMENT_BYTES = 20 * 1024 * 1024;
+const INTERVIEW_FINALIZATION_ATTEMPTS = 5;
+const INTERVIEW_FINALIZATION_DELAY_MS = 1_000;
 
 export interface IntakeUpload {
   readonly buffer: Buffer;
@@ -102,6 +104,17 @@ function extension(contentType: EvidenceContentType): string {
     "text/plain": "txt",
   };
   return extensions[contentType];
+}
+
+function storedFilename(
+  filename: string,
+  contentType: EvidenceContentType,
+): string {
+  const normalized = safeFilename(filename);
+  const suffix = `.${extension(contentType)}`;
+  return normalized.toLowerCase().endsWith(suffix)
+    ? normalized
+    : `${normalized}${suffix}`;
 }
 
 @Injectable()
@@ -244,10 +257,26 @@ export class IntakeService {
     }
 
     const traceId = randomUUID();
-    const snapshot = await this.providers.fetchFinishedConversation(
+    let snapshot = await this.providers.fetchFinishedConversation(
       conversationId,
       { requestId: traceId, traceId },
     );
+    for (
+      let attempt = 1;
+      snapshot.ok &&
+      snapshot.value.status !== "completed" &&
+      !["cancelled", "failed"].includes(snapshot.value.status) &&
+      attempt < INTERVIEW_FINALIZATION_ATTEMPTS;
+      attempt += 1
+    ) {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, INTERVIEW_FINALIZATION_DELAY_MS);
+      });
+      snapshot = await this.providers.fetchFinishedConversation(
+        conversationId,
+        { requestId: traceId, traceId },
+      );
+    }
     if (!snapshot.ok) this.throwProviderFailure(snapshot.error, "voice");
     const transcript = snapshot.value.transcriptText?.trim();
     if (snapshot.value.status !== "completed" || !transcript) {
@@ -318,7 +347,7 @@ export class IntakeService {
     const retentionUntil = new Date(
       Date.now() + input.retentionDays * 86_400_000,
     );
-    const storageKey = `jobs/${input.jobId}/intake/${input.evidenceId}/${safeFilename(input.filename)}.${extension(input.contentType)}`;
+    const storageKey = `jobs/${input.jobId}/intake/${input.evidenceId}/${storedFilename(input.filename, input.contentType)}`;
     const storage = this.providers.evidenceStorage;
     let stored:
       | {

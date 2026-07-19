@@ -21,5 +21,5 @@ Target duration: three to four minutes.
 - Keep deterministic counterparty agents and seeded results ready.
 - Cache only consented demo recordings; never imply that canned audio is a live negotiation.
 - Label live, replayed, simulated, and fixture-derived evidence accurately.
-- Prepare a single-command reset that does not delete non-demo data.
+- Reapply the labeled demo with `pnpm db:seed`, which idempotently upserts fixture data. Use `pnpm db:reset` only for a completely disposable local database because it deletes all existing data.
 - Keep screenshots or a short capture as venue-connectivity fallback, but prioritize the working connected flow.

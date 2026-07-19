@@ -1,33 +1,47 @@
 # Integration ownership
 
-Status: Planned  
+Status: Implemented; external credential smoke tests pending
 Owner: Engineering  
 Last reviewed: 2026-07-19
 
-Provider SDKs and response types remain inside `@relay/integrations`. Applications and domain packages depend on Relay contracts and ports.
+Provider SDK details and response types remain inside `@relay/integrations`. Applications and domain packages depend on Relay contracts and ports. Each live adapter has a deterministic no-network composition for fixture mode and default CI.
 
-| Capability                | Primary option                       | Alternative / local mode          | Boundary responsibility                                        |
-| ------------------------- | ------------------------------------ | --------------------------------- | -------------------------------------------------------------- |
-| Voice interview and agent | ElevenLabs Agents                    | Deterministic interview fixtures  | Session creation, tools, transcript events, disclosure prompts |
-| Outbound phone transport  | ElevenLabs telephony with Twilio/SIP | Human role-play or counter-agent  | Number provisioning, dialing, status callbacks                 |
-| Market discovery          | Google Places                        | Yelp or deterministic fixtures    | Search, deduplication, normalized business contract            |
-| Structured reasoning      | OpenAI model                         | Deterministic extraction fixtures | Contract-constrained extraction and explanations               |
-| Document extraction       | Vision/OCR adapter                   | Fixture parser                    | File validation, extraction, source spans, confidence          |
-| Queue                     | BullMQ on Redis                      | In-memory test double             | Durable jobs, retries, deduplication, progress events          |
-| Persistence               | PostgreSQL via Prisma                | Test database                     | Transactions, schema, migrations, idempotency                  |
-| Object storage            | Supabase Storage or S3-compatible    | Local fixture references          | Uploads, recordings, signed access, retention                  |
-| Authentication            | Clerk                                | Development identity adapter      | Session verification and user ownership                        |
-| Hosting                   | Nuxt/Nitro + persistent services     | Local processes                   | Web, API, and worker independent deployment                    |
+| Capability           | Live implementation                           | Fixture/local mode                              | Boundary responsibility                                                 |
+| -------------------- | --------------------------------------------- | ----------------------------------------------- | ----------------------------------------------------------------------- |
+| Voice interview      | ElevenLabs signed conversation session        | Guided structured intake; no live voice session | Session creation, agent selection, transcript extraction, disclosure    |
+| Outbound negotiation | ElevenLabs Agents native Twilio outbound call | Deterministic call provider                     | Dialing, status/recording retrieval, signed events, active cancellation |
+| Market discovery     | Google Places API (New) Text Search           | Deterministic business fixtures                 | Field masks, callable-candidate filtering, normalization, deduplication |
+| Structured reasoning | OpenAI Responses strict Structured Outputs    | Deterministic extraction fixture                | Interview and quote extraction, validation, source confidence           |
+| Document extraction  | OpenAI Responses text/image/file input        | Mock document parser                            | File validation, structured job fields, evidence association            |
+| Queue                | BullMQ on Redis                               | In-memory queue                                 | Durable jobs, retries, deduplication, progress, concurrency             |
+| Persistence          | PostgreSQL 18 via Prisma                      | Local PostgreSQL 18.4                           | Transactions, schema push, idempotency, audit/outbox state              |
+| Object storage       | Private Supabase Storage                      | Local fixture references                        | Documents, transcripts, recordings, signed access, retention metadata   |
+| Authentication       | Clerk                                         | Local development identity                      | Bearer-session verification and user ownership                          |
+| Hosting              | Nuxt/Nitro plus persistent API/worker         | Local processes                                 | Independently deployed web, API, and worker                             |
 
-## Adapter expectations
+## Adapter guarantees
 
 - Accept and return Relay contracts rather than exporting provider objects.
-- Validate webhook signatures before acknowledging events.
-- Preserve provider event IDs and timestamps for idempotency and diagnostics.
-- Define timeouts, retryability, rate-limit behavior, and error classification.
+- Validate provider data and strict model output before persistence.
+- Verify ElevenLabs webhook signatures against the raw body before acknowledging events.
+- Preserve provider event IDs and timestamps for idempotency and out-of-order protection.
+- Apply bounded timeouts, typed retryability, queue retry policies, and error classification.
+- Avoid replaying an ambiguous billable call start.
 - Redact credentials, phone numbers, document contents, and transcript text from ordinary logs.
-- Offer a deterministic test implementation without network or paid calls.
+- Offer deterministic implementations that require no network or paid calls.
 
-## ElevenLabs and Twilio responsibility
+## Call lifecycle ownership
 
-The final live-call design must explicitly choose whether ElevenLabs owns the agent plus telephony integration or whether the platform connects an ElevenLabs agent through a separately managed Twilio/SIP layer. Avoid duplicate call lifecycle ownership. Record the choice as an ADR after the first verified end-to-end call.
+ElevenLabs is the single agent and telephony lifecycle owner. Relay starts a native Twilio outbound call through ElevenLabs, stores the ElevenLabs conversation ID, polls conversation state, accepts signed post-call events, and retrieves transcript/audio evidence.
+
+Twilio account credentials are not needed for call placement. When both optional Twilio server credentials are configured, Relay can map the ElevenLabs conversation to its Twilio call SID and end an already active call during cancellation. This does not create a second transport path.
+
+The public callback is exactly `/api/v1/webhooks/elevenlabs`. It accepts signed `post_call_transcription`, `post_call_audio`, and `call_initiation_failure` events.
+
+## Data-schema policy
+
+The repository intentionally has no Prisma migrations directory or migration commands. Prisma Client generation and reviewed schema synchronization use `pnpm db:generate` and `pnpm db:push`. `pnpm db:reset` deletes and recreates data and is restricted to an explicitly disposable local database.
+
+## Remaining external validation
+
+Adapter unit/integration behavior is implemented without real secrets. Production readiness still requires service-by-service credential smoke tests, a public HTTPS webhook check, one consented end-to-end call, managed-service backup/restore verification, and deployment monitoring.

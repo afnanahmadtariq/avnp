@@ -102,6 +102,21 @@ export interface CandidateBusiness {
   selected: boolean;
 }
 
+export interface EvidenceAccess {
+  contentType: string;
+  evidenceId: string;
+  expiresAt: string;
+  url: string;
+}
+
+export interface RunEvidenceItem {
+  available: boolean;
+  contentType: string;
+  id: string;
+  kind: string;
+  label: string;
+}
+
 export interface RunCall {
   id: string;
   businessId: string;
@@ -113,6 +128,7 @@ export interface RunCall {
   progress: number;
   transcript: string;
   evidence: string[];
+  evidenceItems?: RunEvidenceItem[];
 }
 
 export interface RunQuote {

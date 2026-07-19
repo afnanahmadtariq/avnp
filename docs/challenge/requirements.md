@@ -6,7 +6,7 @@ Last reviewed: 2026-07-19
 
 The authoritative source is the unchanged [challenge brief](../references/originals/challenge-brief.pdf). This document turns it into implementation identifiers without replacing the original wording.
 
-| ID     | Required result                                                                                               | Planned owner                         |
+| ID     | Required result                                                                                               | Implementation owner                  |
 | ------ | ------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
 | CH-001 | A complete end-to-end voice-agent MVP for one phone-priced vertical.                                          | `apps/web`, `apps/api`, `apps/worker` |
 | CH-002 | Voice interview built on ElevenLabs Agents.                                                                   | Integration adapter + intake workflow |

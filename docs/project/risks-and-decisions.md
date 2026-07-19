@@ -4,17 +4,18 @@ Status: Active
 Owner: Project lead  
 Last reviewed: 2026-07-19
 
-| Topic                           | Current position                                                                          | Decision trigger                           |
-| ------------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------ |
-| Product name                    | Relay is final across product copy, assets, and the `@relay/*` scope.                     | Revisit only by explicit owner decision.   |
-| Live counterparty setup         | Support real, role-played, and counter-agent adapters; deterministic mode is mandatory.   | First complete demo rehearsal.             |
-| ElevenLabs vs Twilio ownership  | Keep ports separate until a verified live-call path proves one lifecycle owner.           | First end-to-end call.                     |
-| Authentication                  | Clerk is planned but the foundation is credential-free.                                   | First multi-user persisted flow.           |
-| Object storage                  | Supabase/S3-compatible adapter; no final vendor lock.                                     | First uploaded document/recording.         |
-| Discovery provider              | Google Places primary, Yelp optional, fixtures default.                                   | Quota, terms, and data-quality evaluation. |
-| OCR/model provider              | Adapter boundary only; compare extraction quality and cost.                               | Golden-document evaluation.                |
-| Recording law and AI disclosure | Treat jurisdiction, consent, disclosure, retention, and calling rules as launch blockers. | Before any live public calling.            |
-| Deployment                      | Nuxt/Nitro web output; API/worker on persistent services.                                 | Preview environment setup.                 |
+| Topic                           | Current position                                                                                                                   | Next review trigger                                                             |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Product name                    | Relay is final across product copy, assets, and the `@relay/*` scope.                                                              | Revisit only by explicit owner decision.                                        |
+| Runtime modes                   | Fixture mode remains deterministic and credential-free; live mode composes the implemented provider stack.                         | Any contract divergence between modes.                                          |
+| Call lifecycle ownership        | ElevenLabs owns the agent and native Twilio call lifecycle; Relay ingests signed events and orchestrates state.                    | First consented real-call smoke test.                                           |
+| Active call cancellation        | Optional Twilio server credentials terminate the underlying active native call; without them Relay still records cancellation.     | Operational cancellation test.                                                  |
+| Authentication                  | Clerk is the selected and implemented live identity provider; local identity remains fixture-only.                                 | Real-key multi-user authorization test.                                         |
+| Object storage                  | Private Supabase Storage is selected; its adapter supports signed access and retention metadata.                                   | Ownership-checked delivery route plus real upload/download/deletion smoke test. |
+| Discovery provider              | Google Places API (New) is the only live directory; deterministic fixtures remain the local path.                                  | Quota, terms, and candidate-quality review.                                     |
+| Extraction provider             | OpenAI Responses handles document/interview/quote extraction with strict structured output.                                        | Golden-document and golden-transcript evaluation.                               |
+| Recording law and AI disclosure | Jurisdiction, consent, disclosure, retention, and calling rules remain launch blockers even though product states are implemented. | Before any live public calling.                                                 |
+| Deployment                      | Nuxt/Nitro web plus persistent NestJS API/worker and managed PostgreSQL 18, Redis, and private storage.                            | Preview environment and backup/restore test.                                    |
 
 ## Highest implementation risks
 
@@ -26,5 +27,7 @@ Last reviewed: 2026-07-19
 - Incomplete specification versions being mixed within one comparison.
 - Model-generated leverage that is not backed by a compatible real quote.
 - Venue connectivity and live-business availability during the demo.
+- A deployed Nuxt build pointing at the wrong API origin.
+- Provider credentials, quotas, destination permissions, or webhook routing differing from fixture assumptions.
 
-Each risk should acquire an owner, mitigation, test/evidence, and review date when its implementation task moves into progress.
+Remaining launch risks require an owner, mitigation, credentialed test/evidence, and review date before the corresponding live capability is enabled.

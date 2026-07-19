@@ -16,11 +16,13 @@ flowchart LR
   Worker --> Domain["Domain policy"]
   Worker --> DB
   Worker --> Adapters["Provider adapters"]
-  Adapters --> Eleven["ElevenLabs"]
-  Adapters --> Phone["Twilio / SIP"]
-  Adapters --> Discovery["Places / Yelp"]
-  Adapters --> AI["AI / OCR"]
-  Adapters --> Storage["Recording and document storage"]
+  Adapters --> Eleven["ElevenLabs Agents"]
+  Eleven --> Phone["Native Twilio number"]
+  Adapters --> Discovery["Google Places API (New)"]
+  Adapters --> AI["OpenAI Responses"]
+  Adapters --> Storage["Private Supabase Storage"]
+  Web --> Auth["Clerk"]
+  API --> Auth
   Worker -->|"events"| API
   API -->|"SSE or polling"| Web
 ```

@@ -12,9 +12,9 @@ Last reviewed: 2026-07-19
 4. **Confirm:** the customer reviews, edits, and confirms a version. Calls cannot start before this state.
 5. **Discover:** Relay finds suitable movers from a live provider or deterministic development fixtures.
 6. **Approve call list:** invalid, duplicate, closed, or out-of-scope candidates are removed.
-7. **Call:** at least three counterparties receive the same specification. Live status shows queued, dialing, connected, negotiating, callback, completed, declined, or failed.
-8. **Extract:** each call produces an itemized quote or another structured terminal outcome.
-9. **Negotiate:** truthful compatible bids and fee questions create leverage. At least one price or term changes in the demonstration.
+7. **Call:** at least three counterparties receive the same specification. Live status shows queued, dialing, in progress, negotiating, completed, cancelled, or failed.
+8. **Extract:** a completed transcript produces an itemized quote or an explicit callback, decline, unavailable, no-answer, busy, or failed outcome.
+9. **Negotiate:** truthful compatible bids and fee questions create leverage. Relay automatically schedules at most one follow-up round for an eligible negotiation and the deterministic demonstration shows a measurable improvement.
 10. **Compare:** Relay normalizes totals and fees, scores completeness and trust, and flags outliers.
 11. **Recommend:** the customer receives a ranked comparison, best-value explanation, savings summary, and linked evidence.
 

@@ -37,6 +37,9 @@ jobs:
       - name: Check formatting
         run: pnpm format:check
 
+      - name: Check workspace boundaries
+        run: pnpm boundaries
+
       - name: Lint
         run: pnpm lint
 

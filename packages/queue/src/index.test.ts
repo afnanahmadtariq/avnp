@@ -39,6 +39,15 @@ describe("queue contracts", () => {
     );
   });
 
+  it("keeps outcome polling alive for normal provider call durations", () => {
+    const policy = queueRetryPolicies[queueJobNames.processCallOutcome];
+
+    expect(policy.backoff.type).toBe("fixed");
+    expect(policy.backoff.delay * (policy.attempts - 1)).toBeGreaterThanOrEqual(
+      30 * 60 * 1_000,
+    );
+  });
+
   it("uses identifiers instead of embedding persistence records", () => {
     const job = discoverBusinessesJob();
 

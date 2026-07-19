@@ -12,7 +12,7 @@ import {
   type NegotiationStrategy,
   type Quote,
 } from "@relay/contracts";
-import type { DatabaseClient, Prisma } from "@relay/database";
+import { Prisma, type DatabaseClient } from "@relay/database";
 import { rankQuotes } from "@relay/domain";
 import type { JobSpecificationExtraction } from "@relay/integrations";
 import {
@@ -108,6 +108,10 @@ const terminalRunStatuses = new Set<string>([
   "FAILED",
   "PARTIALLY_COMPLETED",
 ]);
+const reportReadyRunStatuses = new Set<string>([
+  "COMPLETED",
+  "PARTIALLY_COMPLETED",
+]);
 const liveProfileDefaults = {
   displayName: "",
   email: "",
@@ -178,6 +182,19 @@ function evidenceLabel(kind: string): string {
   };
 
   return labels[kind] ?? humanize(statusName(kind));
+}
+
+function callProgress(status: string): number {
+  const progress: Readonly<Record<string, number>> = {
+    CANCELLED: 100,
+    COMPLETED: 100,
+    DIALING: 20,
+    FAILED: 100,
+    IN_PROGRESS: 55,
+    NEGOTIATING: 80,
+    QUEUED: 0,
+  };
+  return progress[status] ?? 0;
 }
 
 function jsonStringList(value: unknown): string[] {
@@ -488,6 +505,19 @@ export class ProductService {
       (version) => version.contentDigest === digest,
     );
     const confirmedAt = new Date();
+    const sourceMetadata = toJson({
+      consent: {
+        calling: dto.callingConsent,
+        recording: dto.recordingConsent,
+      },
+      evidence: job.evidence.map((item) => ({
+        id: item.id,
+        kind: statusName(item.kind),
+        provider: item.provider,
+      })),
+      mode: this.runtimeConfig.value.mode,
+      source: "guided_form",
+    });
 
     if (!existing) {
       const nextVersion = (job.specificationVersions[0]?.version ?? 0) + 1;
@@ -496,22 +526,15 @@ export class ProductService {
           confirmedAt,
           contentDigest: digest,
           jobId: job.id,
-          sourceMetadata: toJson({
-            consent: {
-              calling: dto.callingConsent,
-              recording: dto.recordingConsent,
-            },
-            mode: this.runtimeConfig.value.mode,
-            source: "guided_form",
-            evidence: job.evidence.map((item) => ({
-              id: item.id,
-              kind: statusName(item.kind),
-              provider: item.provider,
-            })),
-          }),
+          sourceMetadata,
           specification: toJson(parsed.data),
           version: nextVersion,
         },
+      });
+    } else {
+      await this.database.jobSpecificationVersion.update({
+        data: { confirmedAt, sourceMetadata },
+        where: { id: existing.id },
       });
     }
 
@@ -868,6 +891,12 @@ export class ProductService {
   async getReport(runId: string): Promise<unknown> {
     const run = await this.findOwnedRun(runId);
 
+    if (!reportReadyRunStatuses.has(run.status)) {
+      throw new ConflictException(
+        "The report is available after the negotiation run finishes.",
+      );
+    }
+
     if (run.quotes.length === 0) {
       throw new ConflictException("A report is not ready until quotes exist.");
     }
@@ -878,6 +907,11 @@ export class ProductService {
 
   async saveDecision(runId: string, dto: SaveDecisionDto): Promise<unknown> {
     const run = await this.findOwnedRun(runId);
+    if (!reportReadyRunStatuses.has(run.status)) {
+      throw new ConflictException(
+        "Wait for the negotiation run to finish before choosing an offer.",
+      );
+    }
     const quote = run.quotes.find((candidate) => candidate.id === dto.quoteId);
 
     if (!quote) {
@@ -1219,7 +1253,10 @@ export class ProductService {
   }
 
   private requireConfirmedVersion(job: JobRecord) {
-    const version = job.specificationVersions[0];
+    const digest = contentDigest(job.specification);
+    const version = job.specificationVersions.find(
+      (candidate) => candidate.contentDigest === digest,
+    );
 
     if (!version || !job.confirmedAt) {
       throw new ConflictException(
@@ -1251,7 +1288,12 @@ export class ProductService {
   }
 
   private presentJobDetails(job: JobRecord): unknown {
-    const latestVersion = job.specificationVersions[0];
+    const currentDigest = contentDigest(job.specification);
+    const latestVersion = job.confirmedAt
+      ? (job.specificationVersions.find(
+          (candidate) => candidate.contentDigest === currentDigest,
+        ) ?? job.specificationVersions[0])
+      : job.specificationVersions[0];
     const latestRun = job.runs[0];
     const consent = latestVersion
       ? consentFromVersion(latestVersion)
@@ -1279,7 +1321,10 @@ export class ProductService {
     if (!job.confirmedAt) return "review_and_confirm";
     if (job.candidates.length < 3) return "discover_businesses";
     if (!runStatus) return "approve_and_start";
-    if (runStatus === "COMPLETED") return "review_report";
+    if (["COMPLETED", "PARTIALLY_COMPLETED"].includes(runStatus)) {
+      return "review_report";
+    }
+    if (["CANCELLED", "FAILED"].includes(runStatus)) return "start_over";
     if (runStatus === "PAUSED") return "resume_or_cancel";
     return "follow_run";
   }
@@ -1307,6 +1352,10 @@ export class ProductService {
           phone: fixture.phone,
           rating: fixture.rating,
           reviewCount: fixture.reviewCount,
+          verification: toJson({
+            distanceMiles: fixture.distanceMiles,
+            fixture: true,
+          }),
         },
         where: { id: fixture.id },
       });
@@ -1349,6 +1398,18 @@ export class ProductService {
     ] as const;
 
     const run = await this.database.$transaction(async (transaction) => {
+      await transaction.$queryRaw(
+        Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${jobId}, 0))`,
+      );
+      const concurrentRun = await transaction.negotiationRun.findFirst({
+        select: { id: true },
+        where: { jobId, status: { in: [...activeRunStatuses] } },
+      });
+      if (concurrentRun) {
+        throw new ConflictException(
+          `Negotiation run ${concurrentRun.id} is already active for this request.`,
+        );
+      }
       const createdRun = await transaction.negotiationRun.create({
         data: {
           aiDisclosureAcknowledgedAt: consentedAt,
@@ -1820,10 +1881,20 @@ export class ProductService {
           evidence: call.evidence.map((evidence) =>
             evidenceLabel(evidence.kind),
           ),
+          evidenceItems: call.evidence.map((evidence) => ({
+            available:
+              evidence.provider !== FIXTURE_PROVIDER &&
+              (evidence.retentionUntil === null ||
+                evidence.retentionUntil.getTime() > Date.now()),
+            contentType: evidence.contentType,
+            id: evidence.id,
+            kind: statusName(evidence.kind),
+            label: evidenceLabel(evidence.kind),
+          })),
           id: call.id,
           initialOfferCents: quote?.originalAmountCents ?? undefined,
           outcome: asString(asRecord(call.structuredOutcome).outcome) ?? null,
-          progress: call.status === "COMPLETED" ? 100 : 50,
+          progress: callProgress(call.status),
           status: statusName(call.status),
           transcript: call.transcriptText ?? "",
         };

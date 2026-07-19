@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import WorkspacePage from "./workspace.vue";
 
 const api = vi.hoisted(() => ({
+  getEvidenceAccess: vi.fn(),
   getEvents: vi.fn(),
   getJob: vi.fn(),
   getRun: vi.fn(),
@@ -64,6 +65,15 @@ const run = {
       businessName: "Pine & Co. Moving",
       currentOfferCents: 184_000,
       evidence: ["Transcript evidence"],
+      evidenceItems: [
+        {
+          available: true,
+          contentType: "text/plain",
+          id: "evidence-pine",
+          kind: "transcript",
+          label: "Transcript evidence",
+        },
+      ],
       id: "call-pine",
       initialOfferCents: 221_000,
       outcome: "quote_received",
@@ -162,6 +172,12 @@ beforeEach(() => {
   api.getJob.mockResolvedValue(job);
   api.getRun.mockResolvedValue(run);
   api.getEvents.mockResolvedValue({ items: [], sequence: 0 });
+  api.getEvidenceAccess.mockResolvedValue({
+    contentType: "text/plain",
+    evidenceId: "evidence-pine",
+    expiresAt: "2026-07-19T10:05:00.000Z",
+    url: "https://storage.example/signed/transcript",
+  });
   api.saveDecision.mockResolvedValue({
     quoteId: "quote-pine",
     saved: true,
@@ -228,6 +244,30 @@ describe("workspace page", () => {
 
     expect(api.saveDecision).toHaveBeenCalledWith("run-1", "quote-pine");
     expect(decisionButton.text()).toContain("Decision saved");
+  });
+
+  it("opens real evidence through the authenticated access endpoint", async () => {
+    const replace = vi.fn();
+    const close = vi.fn();
+    const open = vi.spyOn(window, "open").mockReturnValue({
+      close,
+      location: { replace },
+      opener: null,
+    } as never);
+    const wrapper = mount(WorkspacePage, {
+      global: { stubs: globalComponents },
+    });
+    await flushPromises();
+
+    await wrapper.get(".evidence-drawer__open").trigger("click");
+    await flushPromises();
+
+    expect(api.getEvidenceAccess).toHaveBeenCalledWith("evidence-pine");
+    expect(replace).toHaveBeenCalledWith(
+      "https://storage.example/signed/transcript",
+    );
+    expect(close).not.toHaveBeenCalled();
+    open.mockRestore();
   });
 
   it("does not show a saved decision when persistence fails", async () => {

@@ -1,6 +1,6 @@
 # Project execution task list
 
-Status: Foundation complete; MVP delivery active  
+Status: Core end-to-end implementation complete; external validation and hardening active
 Owner: Project team  
 Last reviewed: 2026-07-19
 
@@ -29,7 +29,7 @@ Acceptance criteria:
 ## Phase 1 - Monorepo foundation
 
 - [x] Add the root package manifest, pnpm workspace definition, lockfile, and Turbo task graph.
-- [x] Pin Node.js 24, pnpm, PostgreSQL 18.4, exact compatible dependency versions, container digests, and CI actions by immutable release SHA.
+- [x] Pin Node.js 24, pnpm, PostgreSQL 18.4, Redis 8.8.0, exact compatible dependency versions, container digests, and CI actions by immutable release SHA.
 - [x] Add repository-wide ignore, formatting, editor, and environment templates.
 - [x] Define `dev`, `build`, `lint`, `typecheck`, `test`, `format`, `format:check`, and `check` commands.
 - [x] Configure cacheable build/test outputs and uncached persistent development tasks.
@@ -104,9 +104,9 @@ Acceptance criteria:
 
 - [x] Add unit tests for contracts, scoring, red flags, and vertical configuration.
 - [x] Add an API health integration test and a web smoke test.
-- [ ] Add a worker queue round-trip test once Redis orchestration is implemented.
+- [x] Add a conditional Redis/BullMQ round-trip test for deduplication, retries, processing, shutdown, and cleanup.
 - [x] Add CI for frozen install, formatting, linting, typechecking, tests, and builds with current action releases pinned by immutable SHA.
-- [ ] Add dependency-boundary validation.
+- [x] Add dependency-boundary validation.
 
 Acceptance criteria:
 
@@ -120,13 +120,15 @@ Acceptance criteria:
 - [x] Add API-facing Zod contracts for jobs, candidates, run snapshots/events/reports, decisions, profile, and settings.
 - [x] Restrict queue payloads to identifiers and small execution parameters rather than embedded persistence records.
 - [x] Add explicit Prisma push, deterministic seed, and opt-in reset commands without creating a migrations directory.
-- [ ] Build voice and document intake into one confirmed structured job specification.
-- [ ] Discover at least three moving-company counterparties.
-- [ ] Run at least three distinct negotiation styles in parallel or simulated parallel sessions.
-- [ ] Capture every call as an itemized quote, callback commitment, or documented decline.
-- [ ] Demonstrate at least one price or term improvement caused by truthful competing leverage.
-- [ ] Normalize and rank every quote, flag suspicious outliers, and cite transcript/recording evidence.
-- [ ] Present the live negotiation timeline, savings summary, and plain-language recommendation.
+- [x] Build live ElevenLabs voice and OpenAI document intake into one confirmed structured job specification, with credential-free guided/document fixture intake.
+- [x] Discover moving-company counterparties through Google Places API (New), normalize callable candidates, and require at least three unique selections.
+- [x] Create at least three distinct negotiation strategies and execute the call queue with concurrency three.
+- [x] Persist provider call states, transcripts, recordings, structured extraction evidence, quote outcomes, and explicit failure/no-evidence states.
+- [x] Classify every non-quote completion as an explicit callback, decline, unavailable, no-answer, busy, or failed state.
+- [x] Enforce that competing leverage references a real, evidenced quote from the same run and a different business.
+- [x] Automatically schedule an evidenced follow-up round and demonstrate a real price improvement caused by truthful competing leverage.
+- [x] Normalize and rank evidenced quotes, flag suspicious outliers, and cite transcript/recording evidence.
+- [x] Present the live negotiation timeline, savings summary, evidence, decisions, and plain-language recommendation.
 
 Acceptance criteria:
 
@@ -137,9 +139,15 @@ Acceptance criteria:
 
 ## Phase 7 - Production readiness and stretch work
 
-- [ ] Add authentication, consent capture, recording disclosure, retention controls, and audit logging.
-- [ ] Add provider webhook verification, idempotency, retries, timeouts, and human handoff.
-- [ ] Add production Postgres, Redis, object storage, observability, and deployment pipelines.
+- [x] Add Clerk authentication, consent capture, recording disclosure, retention controls, user ownership, account export, and audit logging.
+- [x] Add ElevenLabs raw-body webhook verification, monotonic/idempotent processing, bounded provider timeouts, retry policies, and ambiguous-call replay protection.
+- [x] Add live PostgreSQL, Redis/BullMQ, Supabase private-storage, Google Places, ElevenLabs/Twilio, and OpenAI provider compositions with startup validation.
+- [x] Add pause/resume/cancel run controls and optional provider-side active Twilio call termination.
+- [x] Add an ownership-checked API route that returns short-lived signed URLs for private Supabase evidence.
+- [ ] Add an operator-visible human-handoff workflow.
+- [ ] Provision preview/production services, observability/alerts, backup/restore checks, and deployment pipelines.
+- [ ] Run real-credential smoke tests for Clerk, Google, ElevenLabs/Twilio, OpenAI, Supabase, Redis, the public webhook, and one consented end-to-end live run.
+- [ ] Complete jurisdiction-specific legal/compliance approval before live public calling.
 - [ ] Add multilingual calls, SMS/email follow-up, booking, history, and additional vertical configurations.
 
 Acceptance criteria:
@@ -150,4 +158,4 @@ Acceptance criteria:
 
 ## Current execution slice
 
-The initialization goal completed Phases 0-4 plus the credential-free quality work already checked in Phase 5. The next delivery slice is Phase 6; the Redis queue round-trip and automated dependency-boundary rule remain tracked in Phase 5, while production hardening remains in Phase 7.
+The application now covers the persisted intake -> confirmation -> discovery -> approved calls -> structured outcomes -> truthful follow-up -> ranking -> private evidence -> timeline/report flow in fixture and implemented live-provider compositions. Remaining launch and stretch work is real-credential/public-webhook testing, managed deployment and observability, operator handoff, backup/restore evidence, legal approval, and post-MVP channels or verticals.

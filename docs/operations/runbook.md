@@ -1,6 +1,6 @@
 # Operational runbook
 
-Status: Planned baseline  
+Status: Operational baseline; deployed validation pending
 Owner: Engineering  
 Last reviewed: 2026-07-19
 

@@ -22,7 +22,7 @@
   },
   "dependencies": {
     "@relay/contracts": "workspace:*",
-    "bullmq": "5.79.3"
+    "bullmq": "5.80.8"
   },
   "devDependencies": {
     "@relay/eslint-config": "workspace:*",

@@ -74,14 +74,13 @@ draft -> queued -> discovering -> calling -> comparing -> completed
 Call attempt:
 
 ```text
-queued -> dialing -> connected -> gathering_quote -> negotiating
-                                               \-> callback
-                                               \-> quoted
-                                               \-> declined
-                         \-> failed / canceled
+queued -> dialing -> in_progress -> negotiating -> completed
+       \-> failed / cancelled
 ```
 
-All transitions record an occurred-at timestamp, actor or provider, correlation ID, and reason when the transition represents failure, cancellation, decline, or manual intervention.
+The outcome contract separately supports `quote_received`, `callback_requested`, `declined`, `unavailable`, `no_answer`, `busy`, and `failed`. Provider outcomes and transcript fallbacks are classified into those explicit states before ranking. Transitions record an occurred-at timestamp, actor or provider, correlation ID, and reason where available.
+
+After all initial calls finish, ranking may schedule one follow-up round per eligible negotiation. A follow-up can reference only a lower, same-currency, transcript-backed quote from another business in the same run; the run remains non-terminal until those deterministic follow-ups finish.
 
 ## Idempotency
 

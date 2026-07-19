@@ -7,6 +7,7 @@ export interface TranscriptEntry {
 }
 
 export interface EvidenceItem {
+  accessible?: boolean;
   id: string;
   label: string;
   detail: string;

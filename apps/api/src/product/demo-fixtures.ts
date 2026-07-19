@@ -121,7 +121,7 @@ export const demoMarket = [
     initialOfferCents: 221_000,
     strategy: "FEE_REMOVAL",
     transcript:
-      "Relay: If we accept your earliest Tuesday window, can you improve the all-in price?\nBusiness: I can remove the fuel surcharge and reduce labor. The guaranteed total is $1,840.\nRelay: Please confirm stairs, mileage, and wardrobe boxes are included.\nBusiness: Confirmed.",
+      "Business: Before we continue, are you an automated assistant?\nRelay: Yes. I am Relay, an AI assistant calling for the customer with their approval. A comparable confirmed all-in offer for this same move is $2,050. If we accept your earliest Tuesday window, can you beat it?\nBusiness: I can remove the fuel surcharge and reduce labor. The guaranteed total is $1,840.\nRelay: Please confirm stairs, mileage, and wardrobe boxes are included.\nBusiness: Confirmed.",
   },
   {
     arrivalWindow: "9:00–11:00 AM",

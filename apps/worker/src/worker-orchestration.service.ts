@@ -6,6 +6,7 @@ import {
   jobSpecificationSchema,
   quoteSchema,
   type Business,
+  type CallOutcomeType,
   type CallStatus,
   type JobSpecification,
   type NegotiationStrategy,
@@ -54,6 +55,7 @@ import {
 
 const MILLISECONDS_PER_DAY = 86_400_000;
 const DEFAULT_EVIDENCE_RETENTION_DAYS = 30;
+const MAX_FOLLOW_UP_ROUNDS = 1;
 const TERMINAL_CALL_STATUSES = new Set<DatabaseCallStatus>([
   DatabaseCallStatus.CANCELLED,
   DatabaseCallStatus.COMPLETED,
@@ -69,6 +71,7 @@ const TERMINAL_RUN_STATUSES = new Set<NegotiationRunStatus>([
 const rankingRunInclude = {
   calls: true,
   job: true,
+  negotiations: true,
   quotes: {
     include: { business: true, evidence: true, items: true },
     orderBy: { createdAt: "asc" },
@@ -81,6 +84,30 @@ type RankingRun = Prisma.NegotiationRunGetPayload<{
   include: typeof rankingRunInclude;
 }>;
 type RankingQuote = RankingRun["quotes"][number];
+
+interface EvidenceBackedContinuation {
+  readonly currentQuoteId: string;
+  readonly negotiationId: string;
+  readonly truthfulCompetingQuoteId: string;
+}
+
+interface ContinuationNegotiationInput {
+  readonly businessId: string;
+  readonly currentRound: number;
+  readonly id: string;
+  readonly status: NegotiationStatus;
+}
+
+interface ContinuationQuoteInput {
+  readonly businessId: string;
+  readonly createdAt: Date;
+  readonly currency: string;
+  readonly evidence: readonly { readonly kind: EvidenceKind }[];
+  readonly id: string;
+  readonly negotiationId: string | null;
+  readonly status: QuoteStatus;
+  readonly totalAmountCents: number | null;
+}
 
 class ProviderOperationError extends Error {
   constructor(readonly failure: ProviderFailure) {
@@ -110,6 +137,138 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0
     ? value.trim()
     : undefined;
+}
+
+export function classifyNonQuoteOutcome(
+  explicitOutcome: CallOutcomeType | undefined,
+  transcript: string | null,
+): Exclude<CallOutcomeType, "quote_received"> | undefined {
+  if (explicitOutcome && explicitOutcome !== "quote_received") {
+    return explicitOutcome;
+  }
+  if (explicitOutcome === "quote_received") return undefined;
+  if (!transcript?.trim()) return "no_answer";
+
+  const normalized = transcript.toLowerCase();
+  if (/\b(?:busy signal|line (?:is|was) busy)\b/.test(normalized)) {
+    return "busy";
+  }
+  if (/\b(?:no answer|voicemail|voice mail)\b/.test(normalized)) {
+    return "no_answer";
+  }
+  if (
+    /\b(?:call|contact|reach)(?: me| us)? back\b|\bcallback\b|\btry again later\b/.test(
+      normalized,
+    )
+  ) {
+    return "callback_requested";
+  }
+  if (
+    /\b(?:not interested|declin(?:e|ed)|unable to (?:quote|help|take)|can(?:not|'t) (?:quote|help|take))\b/.test(
+      normalized,
+    )
+  ) {
+    return "declined";
+  }
+
+  const containsQuotedAmount =
+    /[$€£]\s?\d|\b\d[\d,]*(?:\.\d{1,2})?\s*(?:dollars|usd)\b|\b(?:total|price|quote|estimate)\b.{0,40}\d/i.test(
+      transcript,
+    );
+  return containsQuotedAmount ? undefined : "unavailable";
+}
+
+export function selectEvidenceBackedContinuations(input: {
+  readonly eligibleQuoteIds: ReadonlySet<string>;
+  readonly expectedCurrency: string;
+  readonly negotiations: readonly ContinuationNegotiationInput[];
+  readonly quotes: readonly ContinuationQuoteInput[];
+}): readonly EvidenceBackedContinuation[] {
+  const latestQuoteByNegotiation = new Map<string, ContinuationQuoteInput>();
+  for (const quote of input.quotes) {
+    if (quote.negotiationId === null) continue;
+    const current = latestQuoteByNegotiation.get(quote.negotiationId);
+    if (
+      current === undefined ||
+      current.createdAt.getTime() < quote.createdAt.getTime() ||
+      (current.createdAt.getTime() === quote.createdAt.getTime() &&
+        current.id.localeCompare(quote.id) < 0)
+    ) {
+      latestQuoteByNegotiation.set(quote.negotiationId, quote);
+    }
+  }
+
+  const activeNegotiationById = new Map(
+    input.negotiations
+      .filter(
+        (negotiation) =>
+          negotiation.status === NegotiationStatus.IMPROVED ||
+          negotiation.status === NegotiationStatus.UNCHANGED,
+      )
+      .map((negotiation) => [negotiation.id, negotiation] as const),
+  );
+  const isEligibleQuote = (quote: ContinuationQuoteInput): boolean => {
+    const negotiation =
+      quote.negotiationId === null
+        ? undefined
+        : activeNegotiationById.get(quote.negotiationId);
+    return (
+      negotiation !== undefined &&
+      negotiation.businessId === quote.businessId &&
+      quote.status !== QuoteStatus.WITHDRAWN &&
+      quote.currency === input.expectedCurrency &&
+      quote.totalAmountCents !== null &&
+      quote.totalAmountCents > 0 &&
+      quote.evidence.some(
+        (evidence) => evidence.kind === EvidenceKind.TRANSCRIPT,
+      ) &&
+      input.eligibleQuoteIds.has(quote.id)
+    );
+  };
+  const latestEligibleQuotes = [...latestQuoteByNegotiation.values()].filter(
+    isEligibleQuote,
+  );
+
+  return input.negotiations.flatMap((negotiation) => {
+    if (
+      negotiation.currentRound >= MAX_FOLLOW_UP_ROUNDS ||
+      (negotiation.status !== NegotiationStatus.IMPROVED &&
+        negotiation.status !== NegotiationStatus.UNCHANGED)
+    ) {
+      return [];
+    }
+    const currentQuote = latestQuoteByNegotiation.get(negotiation.id);
+    if (
+      currentQuote === undefined ||
+      !isEligibleQuote(currentQuote) ||
+      currentQuote.totalAmountCents === null
+    ) {
+      return [];
+    }
+    const competingQuote = latestEligibleQuotes
+      .filter(
+        (quote) =>
+          quote.businessId !== negotiation.businessId &&
+          quote.totalAmountCents !== null &&
+          quote.totalAmountCents < currentQuote.totalAmountCents!,
+      )
+      .sort((left, right) => {
+        const amountDifference =
+          left.totalAmountCents! - right.totalAmountCents!;
+        return amountDifference === 0
+          ? left.id.localeCompare(right.id)
+          : amountDifference;
+      })[0];
+    return competingQuote === undefined
+      ? []
+      : [
+          {
+            currentQuoteId: currentQuote.id,
+            negotiationId: negotiation.id,
+            truthfulCompetingQuoteId: competingQuote.id,
+          },
+        ];
+  });
 }
 
 function deterministicId(prefix: string, ...values: readonly string[]): string {
@@ -882,13 +1041,68 @@ export class WorkerOrchestrationService {
       }
     }
 
+    const classifiedOutcome = classifyNonQuoteOutcome(
+      snapshot.ok ? snapshot.value.outcome?.outcome : undefined,
+      transcript,
+    );
+    if (classifiedOutcome !== undefined) {
+      await client.$transaction([
+        client.call.update({
+          data: {
+            failureCode: null,
+            ...(recordingKey === undefined
+              ? {}
+              : { recordingStorageKey: recordingKey }),
+            structuredOutcome: mergeJson(call.structuredOutcome, {
+              extraction: "skipped",
+              outcome: classifiedOutcome,
+              ...(recordingFailure === undefined
+                ? {}
+                : { recordingFailureCode: recordingFailure.code }),
+              ...(recordingKey === undefined ? {} : { recordingKey }),
+              ...(transcriptKey === undefined ? {} : { transcriptKey }),
+            }),
+          },
+          where: { id: call.id },
+        }),
+        ...(call.negotiationId === null
+          ? []
+          : [
+              client.negotiation.update({
+                data: {
+                  endedAt: call.endedAt ?? now,
+                  status:
+                    classifiedOutcome === "declined"
+                      ? NegotiationStatus.DECLINED
+                      : NegotiationStatus.FAILED,
+                },
+                where: { id: call.negotiationId },
+              }),
+            ]),
+      ]);
+      await this.appendRunEvent(
+        run.id,
+        "call.updated",
+        AuditActor.WORKER,
+        { callId: call.id, outcome: classifiedOutcome },
+        `${envelope.idempotencyKey}:outcome:${classifiedOutcome}`,
+      );
+      await this.enqueueRank(
+        run.id,
+        `non-quote:${call.id}:${classifiedOutcome}`,
+        envelope.traceId,
+      );
+      return;
+    }
+
     if (transcriptKey === undefined) {
       await client.call.update({
         data: {
           failureCode: null,
           structuredOutcome: mergeJson(call.structuredOutcome, {
             extraction: "skipped",
-            outcome: "completed_without_quote_evidence",
+            outcome: "unavailable",
+            reason: "The provider completed without transcript evidence.",
             ...(recordingFailure === undefined
               ? {}
               : { recordingFailureCode: recordingFailure.code }),
@@ -1268,6 +1482,42 @@ export class WorkerOrchestrationService {
       return;
     }
 
+    const followUps = selectEvidenceBackedContinuations({
+      eligibleQuoteIds: new Set(
+        rankings
+          .filter((ranking) => ranking.eligible)
+          .map((ranking) => ranking.quoteId),
+      ),
+      expectedCurrency: run.job.currency,
+      negotiations: run.negotiations,
+      quotes: run.quotes,
+    });
+    for (const followUp of followUps) {
+      await this.queue.enqueue(
+        createQueueJob(
+          queueJobNames.continueNegotiation,
+          {
+            currentQuoteId: followUp.currentQuoteId,
+            negotiationId: followUp.negotiationId,
+            runId: run.id,
+            truthfulCompetingQuoteId: followUp.truthfulCompetingQuoteId,
+          },
+          {
+            idempotencyKey: `${run.id}:continue:${followUp.negotiationId}:round:1:${followUp.currentQuoteId}:${followUp.truthfulCompetingQuoteId}`,
+            traceId: envelope.traceId,
+          },
+        ),
+      );
+    }
+    if (followUps.length > 0) {
+      await context.updateProgress({
+        followUpsScheduled: followUps.length,
+        pending: true,
+        quotes: rankings.length,
+      });
+      return;
+    }
+
     const callsWithQuotes = new Set(run.quotes.map((quote) => quote.callId));
     const incompleteCalls = run.calls.filter(
       (call) => !callsWithQuotes.has(call.id),
@@ -1352,6 +1602,7 @@ export class WorkerOrchestrationService {
     ) {
       return;
     }
+    if (negotiation.currentRound >= MAX_FOLLOW_UP_ROUNDS) return;
 
     if (envelope.payload.currentQuoteId !== undefined) {
       const currentQuote = await client.quote.findFirst({

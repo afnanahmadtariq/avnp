@@ -191,6 +191,7 @@ async function seed() {
           countryCode: "US",
           formattedAddress: "Charlotte, NC",
         },
+        distanceMiles: 4.2,
         externalId: "fixture-pine",
         id: ids.businesses[0],
         name: "Pine & Co. Moving",
@@ -204,6 +205,7 @@ async function seed() {
           countryCode: "US",
           formattedAddress: "Charlotte, NC",
         },
+        distanceMiles: 7.8,
         externalId: "fixture-carolina",
         id: ids.businesses[1],
         name: "Carolina Transit",
@@ -217,6 +219,7 @@ async function seed() {
           countryCode: "US",
           formattedAddress: "Charlotte, NC",
         },
+        distanceMiles: 10.4,
         externalId: "fixture-atlas",
         id: ids.businesses[2],
         name: "Atlas Moving Group",
@@ -227,10 +230,19 @@ async function seed() {
     ];
 
     for (const [index, business] of businessFixtures.entries()) {
+      const { distanceMiles, ...businessRecord } = business;
       await tx.business.upsert({
         where: { id: business.id },
-        update: { ...business, provider: "fixture" },
-        create: { ...business, provider: "fixture" },
+        update: {
+          ...businessRecord,
+          provider: "fixture",
+          verification: { distanceMiles, fixture: true },
+        },
+        create: {
+          ...businessRecord,
+          provider: "fixture",
+          verification: { distanceMiles, fixture: true },
+        },
       });
       await tx.jobBusiness.upsert({
         where: {

@@ -1,6 +1,7 @@
 import type {
   ApiErrorBody,
   CandidateBusiness,
+  EvidenceAccess,
   IntakeResult,
   IntakeVoiceSession,
   JobDetail,
@@ -104,6 +105,10 @@ export function useRelayApi() {
     getEvents: (runId: string) =>
       request<{ items: RunEvent[]; sequence: number }>(
         `/runs/${encodeURIComponent(runId)}/events`,
+      ),
+    getEvidenceAccess: (evidenceId: string) =>
+      request<EvidenceAccess>(
+        `/evidence/${encodeURIComponent(evidenceId)}/access`,
       ),
     getJob: (publicId: string) =>
       request<JobDetail>(`/jobs/${encodeURIComponent(publicId)}`),

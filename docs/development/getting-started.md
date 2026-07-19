@@ -8,7 +8,7 @@ Last reviewed: 2026-07-19
 
 - Node.js 24.18.0, pinned by `.nvmrc` and `.node-version`.
 - Corepack and pnpm 11.15.0, pinned in the root manifest.
-- Docker Desktop or compatible Docker engine only for local PostgreSQL 18.4 and Redis.
+- Docker Desktop or a compatible Docker engine for the pinned local PostgreSQL 18.4 and Redis 8.8.0 services.
 
 ## First setup
 
@@ -18,12 +18,17 @@ Activate the exact Node.js version from `.nvmrc` or `.node-version`, then run:
 corepack enable
 pnpm install
 cp .env.example .env
+docker compose -f infra/compose.yaml up -d
 pnpm db:generate
+pnpm db:push
+pnpm db:seed
 ```
 
-The scaffold's build and tests do not require live provider values. Empty provider variables are expected until their adapters are enabled.
+The default fixture flow needs only the local `DATABASE_URL` already present in `.env.example`. It does not place calls, spend provider credits, or need Clerk, Google, ElevenLabs, OpenAI, Twilio, or Supabase credentials.
 
-Before creating any paid provider account, read [Service and API setup](service-setup.md). The provider names in `.env.example` are reserved placeholders and are not consumed by the current deterministic application.
+Read [Service and API setup](service-setup.md) before switching `RELAY_MODE` to `live`; it lists every implemented provider, exact account asset, webhook, and secret.
+
+Relay intentionally has no migrations directory or migration workflow. `pnpm db:push` synchronizes the current schema without deleting existing data, and `pnpm db:seed` idempotently adds the labeled deterministic demo. The separate `pnpm db:reset` command is destructive and is for an explicitly disposable local database only.
 
 ## Run applications
 
@@ -45,13 +50,15 @@ Default endpoints:
 - API: `http://localhost:4000/api/v1`
 - Health: `http://localhost:4000/api/v1/health`
 
-## Optional infrastructure
+## Local infrastructure
 
 ```bash
 docker compose -f infra/compose.yaml up -d
 ```
 
-This starts PostgreSQL 18.4 on port 5432 and Redis on port 6379 using local-only development credentials from `.env.example`. PostgreSQL 18 stores its versioned data directory beneath `/var/lib/postgresql`, which is the named-volume mount used by the Compose service. Local database data is disposable; older local database directories are deliberately unsupported.
+This starts PostgreSQL 18.4 on port 5432 and Redis 8.8.0 on port 6379 using local-only development credentials from `.env.example`. Both images are pinned to Alpine 3.23 by immutable multi-architecture digest. PostgreSQL 18 stores its versioned data directory beneath `/var/lib/postgresql`, which is the named-volume mount used by the Compose service.
+
+Fixture mode uses PostgreSQL for persisted product routes and defaults to the in-memory queue. Set `QUEUE_PROVIDER=redis` to exercise the BullMQ round-trip locally.
 
 ## Quality gate
 
@@ -68,4 +75,6 @@ Run individual stages while iterating: `pnpm format:check`, `pnpm lint`, `pnpm t
 - If a workspace import is missing, run `pnpm install` from the repository root; do not install from an application directory.
 - If Prisma types are missing, run `pnpm db:generate`.
 - If ports 3000 or 4000 are occupied, stop the conflicting process before using the default root development command.
-- If PostgreSQL or Redis is unavailable, keep using the credential-free scaffold path unless the feature under development requires persistence or queues.
+- If persisted routes return 503, start PostgreSQL and confirm `DATABASE_URL`, then run `pnpm db:push`.
+- If Redis queue work fails, confirm Redis is healthy and both `QUEUE_PROVIDER=redis` and `REDIS_URL` are set.
+- If live startup lists missing configuration, supply the named values from [the environment catalog](environment.md); do not work around validation by putting secrets in public variables.

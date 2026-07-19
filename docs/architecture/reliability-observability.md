@@ -1,6 +1,6 @@
 # Reliability and observability
 
-Status: Planned baseline  
+Status: Reliability controls implemented; production monitoring pending
 Owner: Engineering  
 Last reviewed: 2026-07-19
 
@@ -9,7 +9,7 @@ Last reviewed: 2026-07-19
 - HTTP creates or reads state; it does not own long-running calls.
 - Queue jobs use stable idempotency keys and bounded retry policies.
 - Provider webhooks can arrive late, duplicated, or out of order; transitions validate monotonic state and provider timestamps.
-- A partially completed run remains useful: completed quotes are compared while failed, declined, and callback states stay visible.
+- A partially completed run remains useful: completed quotes are compared while callbacks, declines, no-answer, busy, unavailable, and failed outcomes remain explicit and visible.
 - Provider-specific failure does not erase previously persisted transcript, quote, or attempt state.
 - Manual retry creates a new attempt under the same logical target rather than mutating history.
 
@@ -17,7 +17,7 @@ Last reviewed: 2026-07-19
 
 Every log and event should carry safe identifiers for request, user/account, job, specification version, run, business, call attempt, queue job, and provider event where applicable. Raw phone numbers, addresses, transcripts, documents, and secrets do not belong in normal structured logs.
 
-## Initial service indicators
+## Production service indicators to add
 
 - Time from user confirmation to first call queued.
 - Call connection and structured-outcome rates.
@@ -33,4 +33,4 @@ Liveness reports that a process can serve or poll. Readiness separately checks r
 
 ## Retry guidance
 
-Retry only errors classified as transient, use exponential backoff with jitter, cap attempts, and surface exhausted work for review. Do not retry a billable call blindly when the provider may have accepted the first request; resolve by idempotency key or provider lookup first.
+Retry only errors classified as transient, cap attempts, and surface exhausted work for review. Provider operations use exponential backoff with jitter; call-status fallback uses bounded fixed polling for normal call duration. Do not retry a billable call blindly when the provider may have accepted the first request; resolve by idempotency key or provider lookup first.

@@ -5,9 +5,6 @@ const validationOnlyUrl =
 
 export default defineConfig({
   schema: "prisma/schema.prisma",
-  migrations: {
-    path: "prisma/migrations",
-  },
   datasource: {
     // Prisma validate parses this URL but does not connect to the database.
     url: process.env.DATABASE_URL ?? validationOnlyUrl,

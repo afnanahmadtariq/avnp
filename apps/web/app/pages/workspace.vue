@@ -31,6 +31,7 @@ const apiError = ref("");
 const apiPending = ref(true);
 const controlPending = ref(false);
 const decisionPending = ref(false);
+const evidencePendingId = ref("");
 const job = ref<JobDetail>();
 const run = ref<RunSnapshot>();
 const runEvents = ref<RunEvent[]>([]);
@@ -91,6 +92,22 @@ function transcriptEntries(call: RunCall): Negotiation["transcript"] {
 }
 
 function mapCall(call: RunCall): Negotiation {
+  const evidence =
+    call.evidenceItems?.map((item) => ({
+      accessible: item.available,
+      detail: "Saved with this negotiation for review.",
+      id: item.id,
+      label: item.label,
+      source: "Verified call record",
+    })) ??
+    call.evidence.map((item, index) => ({
+      accessible: false,
+      detail: "Saved with this negotiation for review.",
+      id: `${call.id}-evidence-${index}`,
+      label: item,
+      source: "Verified call record",
+    }));
+
   return {
     id: call.id,
     company: call.businessName,
@@ -110,12 +127,7 @@ function mapCall(call: RunCall): Negotiation {
         ? "Relay confirmed the price and requested the same itemized scope used for every business."
         : "Relay is keeping the confirmed scope fixed while it gathers a structured outcome.",
     transcript: transcriptEntries(call),
-    evidence: call.evidence.map((item, index) => ({
-      id: `${call.id}-evidence-${index}`,
-      label: item,
-      detail: "Saved with this negotiation for review.",
-      source: "Verified call record",
-    })),
+    evidence,
   };
 }
 
@@ -445,6 +457,34 @@ async function saveRecommendedDecision(): Promise<void> {
         : "Relay could not save the decision.";
   } finally {
     decisionPending.value = false;
+  }
+}
+
+async function openEvidence(
+  evidence: Negotiation["evidence"][number],
+): Promise<void> {
+  if (!evidence.accessible || evidencePendingId.value) return;
+
+  const previewWindow = window.open("about:blank", "_blank");
+  if (previewWindow) previewWindow.opener = null;
+  evidencePendingId.value = evidence.id;
+  apiError.value = "";
+
+  try {
+    const access = await useRelayApi().getEvidenceAccess(evidence.id);
+    if (previewWindow) {
+      previewWindow.location.replace(access.url);
+    } else {
+      window.location.assign(access.url);
+    }
+  } catch (error: unknown) {
+    previewWindow?.close();
+    apiError.value =
+      error instanceof Error
+        ? error.message
+        : "Relay could not open this evidence item.";
+  } finally {
+    evidencePendingId.value = "";
   }
 }
 
@@ -858,6 +898,20 @@ function badgeTone(
                         <p>{{ evidence.detail }}</p>
                         <small>{{ evidence.source }}</small>
                       </div>
+                      <button
+                        v-if="evidence.accessible"
+                        :aria-label="`Open ${evidence.label}`"
+                        class="evidence-drawer__open"
+                        :disabled="Boolean(evidencePendingId)"
+                        type="button"
+                        @click="openEvidence(evidence)"
+                      >
+                        {{
+                          evidencePendingId === evidence.id
+                            ? "Opening…"
+                            : "Open"
+                        }}
+                      </button>
                     </li>
                   </ul>
                 </details>
@@ -1682,7 +1736,7 @@ function badgeTone(
 .evidence-drawer li {
   display: grid;
   gap: 9px;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: auto minmax(0, 1fr) auto;
 }
 
 .evidence-drawer li > span {
@@ -1717,6 +1771,23 @@ function badgeTone(
 .evidence-drawer p {
   line-height: 1.5;
   margin: 3px 0;
+}
+
+.evidence-drawer__open {
+  align-self: center;
+  background: transparent;
+  border: 0;
+  color: var(--relay-blue);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--relay-text-meta);
+  font-weight: 600;
+  padding: 7px 2px 7px 10px;
+}
+
+.evidence-drawer__open:disabled {
+  color: var(--relay-faint);
+  cursor: wait;
 }
 
 .panel__intro {
