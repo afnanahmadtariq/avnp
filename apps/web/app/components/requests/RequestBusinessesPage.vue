@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 
-import ApiFeedback from "../../../components/app/ApiFeedback.vue";
-import { useAccountIdentity } from "../../../composables/useAccountIdentity";
-import type { CandidateBusiness } from "../../../types/api";
+import ApiFeedback from "../app/ApiFeedback.vue";
+import { useAccountIdentity } from "../../composables/useAccountIdentity";
+import type { CandidateBusiness } from "../../types/api";
 
 useSeoMeta({ title: "Approve businesses · Relay" });
 

@@ -1,21 +1,21 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
-import ApiFeedback from "../components/app/ApiFeedback.vue";
-import WorkspaceQuoteComparison from "../components/workspace/QuoteComparison.vue";
-import { useRelayApi } from "../composables/useRelayApi";
-import { useRequestContext } from "../composables/useRequestContext";
-import { useDecisionSelection } from "../composables/useDecisionSelection";
-import type { Negotiation, NegotiationTone, Quote } from "../data/demo";
+import ApiFeedback from "../app/ApiFeedback.vue";
+import WorkspaceQuoteComparison from "../workspace/QuoteComparison.vue";
+import { useRelayApi } from "../../composables/useRelayApi";
+import { useRequestContext } from "../../composables/useRequestContext";
+import { useDecisionSelection } from "../../composables/useDecisionSelection";
+import type { Negotiation, NegotiationTone, Quote } from "../../data/demo";
 import type {
   JobDetail,
   RunCall,
   RunEvent,
   RunQuote,
   RunSnapshot,
-} from "../types/api";
-import { formatCurrency } from "../utils/currency";
-import { evidencePointLabel, evidenceSupportCopy } from "../utils/evidence";
+} from "../../types/api";
+import { formatCurrency } from "../../utils/currency";
+import { evidencePointLabel, evidenceSupportCopy } from "../../utils/evidence";
 
 useSeoMeta({
   description:

@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from "vue";
 
-import ApiFeedback from "../../../components/app/ApiFeedback.vue";
-import type { JobDetail, JobSpecification } from "../../../types/api";
-import { formatCurrency } from "../../../utils/currency";
+import ApiFeedback from "../app/ApiFeedback.vue";
+import type { JobDetail, JobSpecification } from "../../types/api";
+import { formatCurrency } from "../../utils/currency";
 import {
   accessSummary,
   createMovingSpecification,
   homeSizeLabel,
   inventorySummary,
-} from "../../../utils/job-specification";
+} from "../../utils/job-specification";
 
 useSeoMeta({ title: "Review brief · Relay" });
 

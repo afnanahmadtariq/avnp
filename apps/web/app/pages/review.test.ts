@@ -2,7 +2,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { ref } from "vue";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import ReviewPage from "./requests/RLY-2048/review.vue";
+import ReviewPage from "../components/requests/RequestReviewPage.vue";
 
 afterEach(() => {
   vi.clearAllMocks();

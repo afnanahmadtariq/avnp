@@ -2,7 +2,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { ref } from "vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import BusinessesPage from "./requests/RLY-2048/businesses.vue";
+import BusinessesPage from "../components/requests/RequestBusinessesPage.vue";
 
 vi.mock("../composables/useAccountIdentity", () => ({
   useAccountIdentity: () => ({ representedAs: { value: "Afnan" } }),

@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import ApiFeedback from "../../../components/app/ApiFeedback.vue";
-import WorkspaceQuoteComparison from "../../../components/workspace/QuoteComparison.vue";
-import { useDecisionSelection } from "../../../composables/useDecisionSelection";
-import { useRelayApi } from "../../../composables/useRelayApi";
-import { useRequestContext } from "../../../composables/useRequestContext";
-import type { Quote } from "../../../data/demo";
-import type { RankedOffer, RunReport } from "../../../types/api";
-import { formatCurrency } from "../../../utils/currency";
-import { evidencePointLabel } from "../../../utils/evidence";
+import ApiFeedback from "../app/ApiFeedback.vue";
+import WorkspaceQuoteComparison from "../workspace/QuoteComparison.vue";
+import { useDecisionSelection } from "../../composables/useDecisionSelection";
+import { useRelayApi } from "../../composables/useRelayApi";
+import { useRequestContext } from "../../composables/useRequestContext";
+import type { Quote } from "../../data/demo";
+import type { RankedOffer, RunReport } from "../../types/api";
+import { formatCurrency } from "../../utils/currency";
+import { evidencePointLabel } from "../../utils/evidence";
 
 useSeoMeta({ title: "Final report · Relay" });
 

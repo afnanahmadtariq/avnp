@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import RequestReviewPage from "../RLY-2048/review.vue";
+import RequestReviewPage from "../../../components/requests/RequestReviewPage.vue";
 </script>
 
 <template>

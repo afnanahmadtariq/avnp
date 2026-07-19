@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import RequestReportPage from "../RLY-2048/report.vue";
+import RequestReportPage from "../../../components/requests/RequestReportPage.vue";
 </script>
 
 <template>

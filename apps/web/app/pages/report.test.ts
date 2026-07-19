@@ -2,7 +2,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { ref } from "vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import ReportPage from "./requests/RLY-2048/report.vue";
+import ReportPage from "../components/requests/RequestReportPage.vue";
 
 const api = vi.hoisted(() => ({
   getJob: vi.fn(),

@@ -1,7 +1,7 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import WorkspacePage from "./workspace.vue";
+import WorkspacePage from "../components/requests/RequestWorkspacePage.vue";
 
 const api = vi.hoisted(() => ({
   getEvidenceAccess: vi.fn(),

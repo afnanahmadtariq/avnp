@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import RequestWorkspacePage from "../../workspace.vue";
+import RequestWorkspacePage from "../../../components/requests/RequestWorkspacePage.vue";
 </script>
 
 <template>
