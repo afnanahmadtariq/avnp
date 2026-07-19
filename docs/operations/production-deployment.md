@@ -35,7 +35,7 @@ The checked-in production artifacts are:
 - [`infra/production/Caddyfile`](../../infra/production/Caddyfile) terminates HTTPS for the API and proxies only to the API container.
 - [`.github/workflows/deploy-vm.yml`](../../.github/workflows/deploy-vm.yml) builds the runtime image, publishes it to GHCR, and updates the VM.
 - [`.env.prod.example`](../../.env.prod.example) is the safe production configuration template.
-- `.env.prod` is the ignored local/VM secret file. It must never be committed, uploaded as a build artifact, or copied to Vercel.
+- `.env.prod` is the ignored administrator copy used to populate the protected GitHub `PROD_ENV_FILE` environment secret. The workflow writes that secret to `.env` on the VM. Neither file may be committed, uploaded as a build artifact, or copied to Vercel.
 
 ## Runtime version policy
 
@@ -96,7 +96,7 @@ STORAGE_PROVIDER=supabase
 SUPABASE_STORAGE_BUCKET=relay-evidence
 ```
 
-`APP_VERSION` is not stored in `.env.prod`. The deployment workflow passes the verified Git SHA into the Docker build, and the immutable image exposes that SHA through API health. `API_PUBLIC_URL` is an origin without `/api/v1`; Relay appends its webhook path. `CORS_ORIGINS` is the exact browser origin, with no wildcard and no trailing slash.
+`APP_VERSION` is not stored in `.env.prod` or the `PROD_ENV_FILE` secret. The deployment workflow passes the verified Git SHA into the Docker build, and the immutable image exposes that SHA through API health. `API_PUBLIC_URL` is an origin without `/api/v1`; Relay appends its webhook path. `CORS_ORIGINS` is the exact browser origin, with no wildcard and no trailing slash.
 
 ### Required production values
 
@@ -173,17 +173,27 @@ Keep ports 80 and 443 open to Caddy. Restrict SSH to administrator/runner source
 
 Use a supported Linux distribution and install Docker Engine and the Compose plugin from Docker's official repository. Do not rely on an unmaintained distribution package. Follow Docker's current [Engine installation guide](https://docs.docker.com/engine/install/).
 
+The VM must meet this baseline:
+
+| Requirement       | Production configuration                                                                                     |
+| ----------------- | ------------------------------------------------------------------------------------------------------------ |
+| Architecture      | `linux/amd64`; the workflow currently publishes an AMD64 image                                               |
+| Runtime           | Docker Engine running at boot and the `docker compose` plugin                                                |
+| Deploy account    | Non-root user with the dedicated Actions public key in `authorized_keys` and permission to run Docker        |
+| Deploy directory  | `/opt/relay` or the exact `VM_DEPLOY_PATH`, owned by the deploy user with mode `0750`                        |
+| Inbound firewall  | SSH TCP on `VM_PORT`, TCP 80/443, and UDP 443; never expose API port 4000                                    |
+| Outbound firewall | HTTPS to GHCR and external APIs plus the managed PostgreSQL and Redis endpoints                              |
+| DNS and TLS       | `api.zerotools.online` points to the VM; use DNS-only until Caddy obtains TLS, then Cloudflare Full (strict) |
+| Persistent state  | Preserve and back up the Caddy data/config named volumes                                                     |
+| Registry access   | Deploy user logged into `ghcr.io` with a dedicated classic PAT limited to `read:packages`                    |
+
 Create a non-root deploy user and directory. The examples assume `/opt/relay`:
 
 ```bash
 sudo install -d -m 0750 -o <deploy-user> -g <deploy-user> /opt/relay
 ```
 
-The deploy user needs permission to run Docker. Treat that permission as root-equivalent. Copy the completed `.env.prod` to `/opt/relay/.env.prod`, then protect it:
-
-```bash
-chmod 600 /opt/relay/.env.prod
-```
+The deploy user needs permission to run Docker and write to `/opt/relay`. Treat Docker permission as root-equivalent. Do not create the runtime environment file manually: each deployment overwrites `/opt/relay/.env` from the protected GitHub `PROD_ENV_FILE` secret and sets its mode to `0600`.
 
 Authenticate the VM to GHCR once with a dedicated GitHub personal access token (classic) limited to `read:packages`:
 
@@ -191,7 +201,7 @@ Authenticate the VM to GHCR once with a dedicated GitHub personal access token (
 docker login ghcr.io --username <github-user>
 ```
 
-Enter the token only at Docker's password prompt. Do not put the token in `.env.prod`, Compose, the repository, or the deployment workflow. GitHub documents the required scope in [Working with the Container registry](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry).
+Enter the token only at Docker's password prompt. Do not put the token in `.env.prod`, `PROD_ENV_FILE`, Compose, the repository, or the deployment workflow. GitHub documents the required scope in [Working with the Container registry](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry).
 
 The Compose project stores Caddy certificate state in named volumes. Include those volumes in VM backups; do not delete them during an ordinary deployment.
 
@@ -201,14 +211,23 @@ Create a protected GitHub Actions environment named `production`. Require approv
 
 Add these exact GitHub Actions secrets to that environment:
 
-| Secret               | Value                                              |
-| -------------------- | -------------------------------------------------- |
-| `VM_HOST`            | VM hostname or public IP used by SSH               |
-| `VM_PORT`            | SSH port, normally `22`                            |
-| `VM_USER`            | Non-root deploy user                               |
-| `VM_SSH_PRIVATE_KEY` | Private key dedicated to GitHub Actions deployment |
-| `VM_SSH_KNOWN_HOSTS` | Verified `known_hosts` line for the VM             |
-| `VM_DEPLOY_PATH`     | Absolute VM directory, normally `/opt/relay`       |
+| Secret               | Value                                                              |
+| -------------------- | ------------------------------------------------------------------ |
+| `PROD_ENV_FILE`      | Complete multiline contents of the reviewed local `.env.prod` file |
+| `VM_HOST`            | VM hostname or public IP used by SSH                               |
+| `VM_PORT`            | SSH port, normally `22`                                            |
+| `VM_USER`            | Non-root deploy user                                               |
+| `VM_SSH_PRIVATE_KEY` | Private key dedicated to GitHub Actions deployment                 |
+| `VM_SSH_KNOWN_HOSTS` | Verified `known_hosts` line for the VM                             |
+| `VM_DEPLOY_PATH`     | Absolute VM directory, normally `/opt/relay`                       |
+
+`PROD_ENV_FILE` is one multiline secret, not 32 separate GitHub secrets. Paste the exact contents of `.env.prod` in **Settings -> Environments -> production -> Environment secrets**, or set it without printing the file:
+
+```bash
+gh secret set PROD_ENV_FILE --env production < .env.prod
+```
+
+Every deployment materializes that secret only in the runner's temporary directory, copies it over SSH directly to `VM_DEPLOY_PATH/.env`, replaces the prior file, applies mode `0600`, and removes the runner copy. Updating `PROD_ENV_FILE` takes effect on the next VM deployment. An image rollback continues to use the current `.env`; to revert configuration as well, first restore the intended `PROD_ENV_FILE` value and deploy again.
 
 Generate `VM_SSH_KNOWN_HOSTS` from a trusted administrator machine, then compare the fingerprint with the VM console or hosting control panel before saving it. Do not accept an unknown host key inside the workflow.
 
@@ -221,12 +240,13 @@ On an eligible release, the workflow:
 1. checks out the exact commit;
 2. builds the pinned production Docker image;
 3. publishes immutable Git-SHA and moving `main` tags to GHCR;
-4. copies the production Compose and Caddy files to `VM_DEPLOY_PATH` over SSH;
-5. tells Compose to pull the immutable SHA image and replace the API and worker;
-6. preserves `.env.prod` and Caddy volumes on the VM;
-7. waits for the API, worker, and Caddy container health checks before reporting success.
+4. materializes `PROD_ENV_FILE` without logging it;
+5. copies the production Compose and Caddy files and overwrites `VM_DEPLOY_PATH/.env` over SSH;
+6. sets `.env` to mode `0600` and tells Compose to use it;
+7. pulls the immutable SHA image and replaces the API and worker;
+8. preserves the Caddy volumes and waits for all container health checks before reporting success.
 
-If the replacement fails its Compose health checks, the workflow retains the prior release reference and attempts to restore that known-running stack. Treat the workflow as failed until the operator verifies the restored version and diagnoses the rejected release.
+If the replacement fails its Compose health checks, the workflow retains the prior release reference and attempts to restore that image using the newly uploaded `.env`. Because the workflow overwrites `.env` on every deployment, configuration is not rolled back automatically. Treat the workflow as failed until the operator verifies the service and restores `PROD_ENV_FILE` if configuration caused the failure.
 
 Vercel deploys the same `main` commit independently. Confirm both Vercel and VM deployments before treating a release as complete.
 
@@ -315,21 +335,21 @@ Every runtime image is tagged with its source Git SHA. To roll back the API and 
 
    ```bash
    RELAY_IMAGE=ghcr.io/<owner>/relay-runtime:<known-good-sha> \
-     RELAY_ENV_FILE=.env.prod \
-     docker compose --env-file .env.prod -f compose.yaml pull
+     RELAY_ENV_FILE=.env \
+     docker compose --env-file .release.env -f compose.yaml pull
    RELAY_IMAGE=ghcr.io/<owner>/relay-runtime:<known-good-sha> \
-     RELAY_ENV_FILE=.env.prod \
-     docker compose --env-file .env.prod -f compose.yaml up -d --remove-orphans
+     RELAY_ENV_FILE=.env \
+     docker compose --env-file .release.env -f compose.yaml up -d --remove-orphans
    ```
 
 4. Verify API health, worker logs, queue depth, and one authenticated read.
 5. In Vercel, promote the matching known-good deployment or redeploy its Git SHA.
 
-Do not delete images, `.env.prod`, database data, Redis state, or Caddy volumes during rollback. If the database schema is not backward-compatible, stop and restore through the separately tested database recovery procedure instead of guessing.
+Do not delete images, `.env`, database data, Redis state, or Caddy volumes during rollback. If the database schema is not backward-compatible, stop and restore through the separately tested database recovery procedure instead of guessing.
 
 ## Production security checklist
 
-- Keep `.env.prod` mode `0600`, outside Git, and backed up only in an approved secret store.
+- Keep the VM `.env` mode `0600`, outside Git, and sourced only from the protected `PROD_ENV_FILE` environment secret.
 - Keep the API container private behind Caddy; expose only ports 80 and 443.
 - Use exact CORS origins and Cloudflare Full (strict) TLS.
 - Use a dedicated SSH key, verified host key, protected GitHub environment, and least-privilege GHCR token.

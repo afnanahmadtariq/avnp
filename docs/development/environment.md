@@ -6,7 +6,7 @@ Last reviewed: 2026-07-19
 
 Copy `.env.example` to the repository-root `.env` for local development. The root `pnpm dev`, `pnpm dev:web`, `pnpm dev:api`, and `pnpm dev:worker` commands load it before Turbo starts applications. Existing shell variables take precedence.
 
-For production, copy `.env.prod.example` to the ignored `.env.prod`, then supply it to the VM only. Vercel receives only the three browser build variables listed in the production deployment runbook.
+For production, copy `.env.prod.example` to the ignored `.env.prod`, review it, and store its complete contents in the protected GitHub `PROD_ENV_FILE` environment secret. The VM deployment overwrites `VM_DEPLOY_PATH/.env` from that secret. Vercel receives only the three browser build variables listed in the production deployment runbook.
 
 Fixture mode needs no paid provider credentials. `DATABASE_URL` is the only value required for its persisted product routes. Live mode validates the selected provider values at startup and fails with the missing variable names.
 
