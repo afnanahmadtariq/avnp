@@ -303,7 +303,7 @@ async function seed() {
         status: "COMPLETED",
         structuredOutcome: { outcome: "quote_received", quoteId: ids.quote },
         transcriptText:
-          "Relay: If we accept your earliest Saturday window, can you improve the all-in price?\nBusiness: I can remove the fuel surcharge and reduce labor. The guaranteed total is $1,840.\nRelay: Please confirm stairs, mileage, and wardrobe boxes are included.\nBusiness: Confirmed, with a three-person crew arriving between 8:00 and 9:00 AM.",
+          "Business: Before we continue, are you an automated assistant?\nRelay: Yes. I am Relay, an AI assistant calling for the customer with their approval. A comparable confirmed all-in offer for this same move is $2,050. If we accept your earliest Tuesday window, can you beat it?\nBusiness: I can remove the fuel surcharge and reduce labor. The guaranteed total is $1,840.\nRelay: Please confirm stairs, mileage, and wardrobe boxes are included.\nBusiness: Confirmed.",
       },
       create: {
         aiDisclosureMadeAt: new Date("2026-07-19T10:04:00.000Z"),
@@ -320,7 +320,7 @@ async function seed() {
         status: "COMPLETED",
         structuredOutcome: { outcome: "quote_received", quoteId: ids.quote },
         transcriptText:
-          "Relay: If we accept your earliest Saturday window, can you improve the all-in price?\nBusiness: I can remove the fuel surcharge and reduce labor. The guaranteed total is $1,840.\nRelay: Please confirm stairs, mileage, and wardrobe boxes are included.\nBusiness: Confirmed, with a three-person crew arriving between 8:00 and 9:00 AM.",
+          "Business: Before we continue, are you an automated assistant?\nRelay: Yes. I am Relay, an AI assistant calling for the customer with their approval. A comparable confirmed all-in offer for this same move is $2,050. If we accept your earliest Tuesday window, can you beat it?\nBusiness: I can remove the fuel surcharge and reduce labor. The guaranteed total is $1,840.\nRelay: Please confirm stairs, mileage, and wardrobe boxes are included.\nBusiness: Confirmed.",
       },
     });
 

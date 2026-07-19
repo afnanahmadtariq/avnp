@@ -14,6 +14,7 @@ export type {
   CallStatusSnapshot,
   StartedCall,
   StartCallRequest,
+  TruthfulCallLeverage,
   VerifiedCallEvent,
 } from "./calls.js";
 export {

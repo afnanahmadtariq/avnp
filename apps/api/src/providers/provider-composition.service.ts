@@ -23,6 +23,11 @@ export interface ProviderContextInput {
   readonly traceId: string;
 }
 
+export interface SignedInterviewSession {
+  readonly conversationId: string;
+  readonly signedUrl: string;
+}
+
 /**
  * Owns the process-wide live provider clients. Fixture mode intentionally
  * leaves paid providers absent so local development can boot without secrets.
@@ -106,7 +111,7 @@ export class ProviderCompositionService {
 
   async createSignedInterviewUrl(
     input: ProviderContextInput,
-  ): Promise<ProviderResult<string>> {
+  ): Promise<ProviderResult<SignedInterviewSession>> {
     const config = this.runtimeConfig.value;
     const provider = this.callProvider?.name ?? "elevenlabs-agents";
     const agentId = config.call.interviewAgentId ?? config.call.agentId;
@@ -140,6 +145,9 @@ export class ProviderCompositionService {
         "https://api.elevenlabs.io/v1/convai/conversation/get-signed-url",
       );
       url.searchParams.set("agent_id", agentId);
+      // Allocate the one-time provider conversation ID with the signed URL so
+      // Relay can bind it to the authenticated job before the client connects.
+      url.searchParams.set("include_conversation_id", "true");
       response = await fetch(url, {
         headers: { "xi-api-key": apiKey },
         method: "GET",
@@ -179,6 +187,7 @@ export class ProviderCompositionService {
       };
     }
 
+    let conversationId: unknown;
     let signedUrl: unknown;
     try {
       const responseText = await response.text();
@@ -189,11 +198,22 @@ export class ProviderCompositionService {
         "signed_url" in payload
           ? payload.signed_url
           : undefined;
+      conversationId =
+        typeof payload === "object" &&
+        payload !== null &&
+        "conversation_id" in payload
+          ? payload.conversation_id
+          : undefined;
     } catch {
+      conversationId = undefined;
       signedUrl = undefined;
     }
 
-    if (typeof signedUrl === "string") {
+    if (
+      typeof conversationId === "string" &&
+      /^[A-Za-z0-9_-]{1,200}$/.test(conversationId) &&
+      typeof signedUrl === "string"
+    ) {
       try {
         const parsedUrl = new URL(signedUrl);
         if (
@@ -201,7 +221,13 @@ export class ProviderCompositionService {
           (parsedUrl.hostname === "elevenlabs.io" ||
             parsedUrl.hostname.endsWith(".elevenlabs.io"))
         ) {
-          return { ok: true, value: parsedUrl.toString() };
+          return {
+            ok: true,
+            value: {
+              conversationId,
+              signedUrl: parsedUrl.toString(),
+            },
+          };
         }
       } catch {
         // The common invalid-response result below is intentionally generic.

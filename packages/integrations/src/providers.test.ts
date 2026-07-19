@@ -230,6 +230,14 @@ describe("ElevenLabsTwilioCallProvider", () => {
         job,
         locale: "en-US",
         strategy: "fee_removal",
+        truthfulLeverage: {
+          competingBusinessName: "Carolina Transit",
+          competingQuoteAmountMinor: 184_000,
+          competingQuoteId: "quote-competing",
+          currency: "USD",
+          currentQuoteAmountMinor: 221_000,
+          currentQuoteId: "quote-current",
+        },
       },
       context,
     );
@@ -252,6 +260,25 @@ describe("ElevenLabsTwilioCallProvider", () => {
       (variables as Record<string, unknown>).relay_negotiation_strategy,
       "fee_removal",
     );
+    assert.deepEqual(variables, {
+      relay_business_id: "business-1",
+      relay_business_name: "Pine & Co. Moving",
+      relay_callback_url: "https://relay.example/webhooks/elevenlabs",
+      relay_competing_business_name: "Carolina Transit",
+      relay_competing_quote_amount: "1840.00",
+      relay_competing_quote_id: "quote-competing",
+      relay_current_quote_amount: "2210.00",
+      relay_current_quote_id: "quote-current",
+      relay_identify_as_ai_when_asked: true,
+      relay_is_follow_up: true,
+      relay_job_specification: JSON.stringify(job),
+      relay_locale: "en-US",
+      relay_negotiation_strategy: "fee_removal",
+      relay_quote_currency: "USD",
+      relay_recording_disclosure: "This call may be recorded.",
+      relay_request_id: "request-1",
+      relay_trace_id: "trace-1",
+    });
 
     const snapshot = await provider.getCall("conv-123", context);
     assert.equal(snapshot.ok, true);

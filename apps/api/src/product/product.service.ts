@@ -84,6 +84,7 @@ const runInclude = {
   quotes: {
     include: { business: true, evidence: true, items: true },
     orderBy: { createdAt: "asc" },
+    where: { status: { not: "WITHDRAWN" } },
   },
   recommendation: { include: { bestQuote: true } },
   specificationVersion: true,
@@ -94,6 +95,29 @@ type RunRecord = Prisma.NegotiationRunGetPayload<{
   include: typeof runInclude;
 }>;
 type RunQuoteRecord = RunRecord["quotes"][number];
+
+function currentRunQuotes(run: RunRecord): RunQuoteRecord[] {
+  const latestByBusiness = new Map<string, RunQuoteRecord>();
+  for (const quote of run.quotes) {
+    if (quote.status === "WITHDRAWN") continue;
+    const current = latestByBusiness.get(quote.businessId);
+    if (
+      !current ||
+      quote.createdAt.getTime() > current.createdAt.getTime() ||
+      (quote.createdAt.getTime() === current.createdAt.getTime() &&
+        quote.id.localeCompare(current.id) > 0)
+    ) {
+      latestByBusiness.set(quote.businessId, quote);
+    }
+  }
+  return [...latestByBusiness.values()].sort((left, right) => {
+    const createdDifference =
+      left.createdAt.getTime() - right.createdAt.getTime();
+    return createdDifference === 0
+      ? left.id.localeCompare(right.id)
+      : createdDifference;
+  });
+}
 
 const activeRunStatuses = [
   "QUEUED",
@@ -242,20 +266,30 @@ function presentQuote(quote: RunQuoteRecord): Record<string, unknown> {
 
 function presentRunMetrics(
   run: RunRecord,
-  verifiedSavingsCents = run.recommendation?.savingsAmountCents ??
-    Math.max(0, ...run.quotes.map((quote) => quote.negotiatedSavingCents ?? 0)),
+  verifiedSavingsCents?: number,
 ): Record<string, number> {
+  const quotes = currentRunQuotes(run);
+  const recommendedQuoteIsCurrent = quotes.some(
+    (quote) => quote.id === run.recommendation?.bestQuoteId,
+  );
+  const savingsCents =
+    verifiedSavingsCents ??
+    (recommendedQuoteIsCurrent
+      ? (run.recommendation?.savingsAmountCents ?? 0)
+      : Math.max(
+          0,
+          ...quotes.map((quote) => quote.negotiatedSavingCents ?? 0),
+        ));
   return {
     callsHandled: run.calls.length,
-    completedQuotes: run.quotes.filter((quote) => quote.status === "FINAL")
-      .length,
+    completedQuotes: quotes.filter((quote) => quote.status === "FINAL").length,
     timeAvoidedMinutes: Math.round(
       run.calls.reduce(
         (total, call) => total + (call.durationSeconds ?? 0),
         0,
       ) / 60,
     ),
-    verifiedSavingsCents,
+    verifiedSavingsCents: savingsCents,
   };
 }
 
@@ -530,11 +564,6 @@ export class ProductService {
           specification: toJson(parsed.data),
           version: nextVersion,
         },
-      });
-    } else {
-      await this.database.jobSpecificationVersion.update({
-        data: { confirmedAt, sourceMetadata },
-        where: { id: existing.id },
       });
     }
 
@@ -897,7 +926,7 @@ export class ProductService {
       );
     }
 
-    if (run.quotes.length === 0) {
+    if (currentRunQuotes(run).length === 0) {
       throw new ConflictException("A report is not ready until quotes exist.");
     }
 
@@ -912,7 +941,9 @@ export class ProductService {
         "Wait for the negotiation run to finish before choosing an offer.",
       );
     }
-    const quote = run.quotes.find((candidate) => candidate.id === dto.quoteId);
+    const quote = currentRunQuotes(run).find(
+      (candidate) => candidate.id === dto.quoteId,
+    );
 
     if (!quote) {
       throw new BadRequestException(
@@ -1758,7 +1789,8 @@ export class ProductService {
   }
 
   private async buildAndPersistReport(run: RunRecord) {
-    const candidates = run.quotes.map((quote) => ({
+    const quotes = currentRunQuotes(run);
+    const candidates = quotes.map((quote) => ({
       business: {
         rating:
           quote.business.rating === null
@@ -1772,7 +1804,7 @@ export class ProductService {
       expectedFeeCodes: ["labor", "materials", "transportation"],
       requireEvidence: true,
     });
-    const quoteById = new Map(run.quotes.map((quote) => [quote.id, quote]));
+    const quoteById = new Map(quotes.map((quote) => [quote.id, quote]));
     const bestRanking = rankings[0];
     const bestQuote = bestRanking
       ? quoteById.get(bestRanking.quoteId)
@@ -1870,9 +1902,10 @@ export class ProductService {
   }
 
   private presentRun(run: RunRecord): unknown {
+    const quotes = currentRunQuotes(run);
     return {
       calls: run.calls.map((call) => {
-        const quote = run.quotes.find((item) => item.callId === call.id);
+        const quote = quotes.find((item) => item.callId === call.id);
 
         return {
           businessId: call.businessId,
@@ -1910,7 +1943,7 @@ export class ProductService {
       metrics: presentRunMetrics(run),
       mode: this.runtimeConfig.value.mode,
       paused: run.status === "PAUSED",
-      quotes: run.quotes.map((quote) => presentQuote(quote)),
+      quotes: quotes.map((quote) => presentQuote(quote)),
       specificationVersion: {
         id: run.specificationVersion.id,
         version: run.specificationVersion.version,

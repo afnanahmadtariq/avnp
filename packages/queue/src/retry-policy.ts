@@ -38,6 +38,8 @@ function retryPolicy(attempts: number, delay: number): QueueRetryPolicy {
 function fixedRetryPolicy(attempts: number, delay: number): QueueRetryPolicy {
   return {
     attempts,
-    backoff: { delay, jitter: 0.2, type: "fixed" },
+    // Polling windows are safety deadlines. Jitter may shorten every delay,
+    // so fixed polling deliberately uses no jitter.
+    backoff: { delay, jitter: 0, type: "fixed" },
   };
 }

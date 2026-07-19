@@ -37,7 +37,7 @@ export class ElevenLabsWebhookController {
   constructor(private readonly webhooks: ElevenLabsWebhookService) {}
 
   @Post()
-  @HttpCode(HttpStatus.ACCEPTED)
+  @HttpCode(HttpStatus.OK)
   receive(@Req() request: RawWebhookRequest): Promise<WebhookAcceptance> {
     if (!(request.rawBody instanceof Uint8Array)) {
       throw new BadRequestException("A raw webhook body is required.");

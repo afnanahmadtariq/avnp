@@ -34,6 +34,7 @@ import type {
   ProviderResult,
   StoreEvidenceRequest,
   StoredEvidence,
+  TruthfulCallLeverage,
 } from "@relay/integrations";
 import {
   createQueueJob,
@@ -80,10 +81,21 @@ const rankingRunInclude = {
   specificationVersion: true,
 } satisfies Prisma.NegotiationRunInclude;
 
+const truthfulLeverageQuoteInclude = {
+  business: { select: { name: true } },
+  evidence: { select: { kind: true } },
+  negotiation: {
+    select: { businessId: true, runId: true, status: true },
+  },
+} satisfies Prisma.QuoteInclude;
+
 type RankingRun = Prisma.NegotiationRunGetPayload<{
   include: typeof rankingRunInclude;
 }>;
 type RankingQuote = RankingRun["quotes"][number];
+type TruthfulLeverageQuote = Prisma.QuoteGetPayload<{
+  include: typeof truthfulLeverageQuoteInclude;
+}>;
 
 interface EvidenceBackedContinuation {
   readonly currentQuoteId: string;
@@ -107,6 +119,21 @@ interface ContinuationQuoteInput {
   readonly negotiationId: string | null;
   readonly status: QuoteStatus;
   readonly totalAmountCents: number | null;
+}
+
+interface TruthfulLeverageQuoteInput extends ContinuationQuoteInput {
+  readonly businessName: string;
+  readonly negotiationBusinessId: string | null;
+  readonly negotiationRunId: string | null;
+  readonly negotiationStatus: NegotiationStatus | null;
+  readonly runId: string | null;
+}
+
+interface RankingQuoteVersionInput {
+  readonly businessId: string;
+  readonly createdAt: Date;
+  readonly id: string;
+  readonly status: QuoteStatus;
 }
 
 class ProviderOperationError extends Error {
@@ -143,10 +170,17 @@ export function classifyNonQuoteOutcome(
   explicitOutcome: CallOutcomeType | undefined,
   transcript: string | null,
 ): Exclude<CallOutcomeType, "quote_received"> | undefined {
-  if (explicitOutcome && explicitOutcome !== "quote_received") {
+  if (explicitOutcome === "quote_received") return undefined;
+
+  const containsQuotedAmount =
+    transcript !== null &&
+    /[$€£]\s?\d|\b\d[\d,]*(?:\.\d{1,2})?\s*(?:dollars|usd)\b|\b(?:total|price|quote|estimate)\b.{0,40}\d/i.test(
+      transcript,
+    );
+  if (containsQuotedAmount) return undefined;
+  if (explicitOutcome !== undefined) {
     return explicitOutcome;
   }
-  if (explicitOutcome === "quote_received") return undefined;
   if (!transcript?.trim()) return "no_answer";
 
   const normalized = transcript.toLowerCase();
@@ -170,12 +204,100 @@ export function classifyNonQuoteOutcome(
   ) {
     return "declined";
   }
+  return "unavailable";
+}
 
-  const containsQuotedAmount =
-    /[$€£]\s?\d|\b\d[\d,]*(?:\.\d{1,2})?\s*(?:dollars|usd)\b|\b(?:total|price|quote|estimate)\b.{0,40}\d/i.test(
-      transcript,
+export function selectLatestActiveQuoteIds(
+  quotes: readonly RankingQuoteVersionInput[],
+): ReadonlySet<string> {
+  const latestByBusiness = new Map<string, RankingQuoteVersionInput>();
+  for (const quote of quotes) {
+    const current = latestByBusiness.get(quote.businessId);
+    if (
+      current === undefined ||
+      current.createdAt.getTime() < quote.createdAt.getTime() ||
+      (current.createdAt.getTime() === quote.createdAt.getTime() &&
+        current.id.localeCompare(quote.id) < 0)
+    ) {
+      latestByBusiness.set(quote.businessId, quote);
+    }
+  }
+  return new Set(
+    [...latestByBusiness.values()]
+      .filter((quote) => quote.status !== QuoteStatus.WITHDRAWN)
+      .map((quote) => quote.id),
+  );
+}
+
+export function validateTruthfulLeverageQuotes(input: {
+  readonly competingQuote: TruthfulLeverageQuoteInput | null;
+  readonly currentQuote: TruthfulLeverageQuoteInput | null;
+  readonly expectedBusinessId: string;
+  readonly expectedCurrency: string;
+  readonly expectedNegotiationId: string;
+  readonly expectedRunId: string;
+  readonly latestCompetingQuoteId: string | undefined;
+  readonly latestCurrentQuoteId: string | undefined;
+}): TruthfulCallLeverage {
+  const current = input.currentQuote;
+  const competing = input.competingQuote;
+  const activeNegotiationStatuses = new Set<NegotiationStatus>([
+    NegotiationStatus.IMPROVED,
+    NegotiationStatus.IN_PROGRESS,
+    NegotiationStatus.UNCHANGED,
+  ]);
+  const isTranscriptBacked = (quote: TruthfulLeverageQuoteInput): boolean =>
+    quote.evidence.some(
+      (evidence) => evidence.kind === EvidenceKind.TRANSCRIPT,
     );
-  return containsQuotedAmount ? undefined : "unavailable";
+  const hasActiveNegotiation = (quote: TruthfulLeverageQuoteInput): boolean =>
+    quote.negotiationId !== null &&
+    quote.negotiationBusinessId === quote.businessId &&
+    quote.negotiationRunId === quote.runId &&
+    quote.negotiationStatus !== null &&
+    activeNegotiationStatuses.has(quote.negotiationStatus);
+
+  if (
+    current === null ||
+    competing === null ||
+    current.id !== input.latestCurrentQuoteId ||
+    competing.id !== input.latestCompetingQuoteId ||
+    current.runId !== input.expectedRunId ||
+    competing.runId !== input.expectedRunId ||
+    current.negotiationId !== input.expectedNegotiationId ||
+    current.businessId !== input.expectedBusinessId ||
+    competing.businessId === input.expectedBusinessId ||
+    current.status === QuoteStatus.WITHDRAWN ||
+    competing.status === QuoteStatus.WITHDRAWN ||
+    !hasActiveNegotiation(current) ||
+    !hasActiveNegotiation(competing) ||
+    !isTranscriptBacked(current) ||
+    !isTranscriptBacked(competing) ||
+    current.currency !== input.expectedCurrency ||
+    competing.currency !== input.expectedCurrency ||
+    current.currency !== competing.currency ||
+    current.totalAmountCents === null ||
+    competing.totalAmountCents === null ||
+    !Number.isSafeInteger(current.totalAmountCents) ||
+    !Number.isSafeInteger(competing.totalAmountCents) ||
+    current.totalAmountCents <= 0 ||
+    competing.totalAmountCents <= 0 ||
+    competing.totalAmountCents >= current.totalAmountCents ||
+    competing.businessName.trim().length === 0
+  ) {
+    throw new NonRetryableQueueError(
+      "Truthful leverage requires the latest active, transcript-evidenced, same-currency quotes from this run, with a lower competing offer from another business.",
+    );
+  }
+
+  return {
+    competingBusinessName: competing.businessName,
+    competingQuoteAmountMinor: competing.totalAmountCents,
+    competingQuoteId: competing.id,
+    currency: current.currency,
+    currentQuoteAmountMinor: current.totalAmountCents,
+    currentQuoteId: current.id,
+  };
 }
 
 export function selectEvidenceBackedContinuations(input: {
@@ -692,6 +814,15 @@ export class WorkerOrchestrationService {
       );
     }
 
+    const truthfulLeverage = await this.loadTruthfulLeverage({
+      businessId: call.businessId,
+      currentQuoteId: envelope.payload.currentQuoteId,
+      expectedCurrency: call.job.currency,
+      negotiationId: call.negotiationId,
+      runId: call.run.id,
+      truthfulCompetingQuoteId: envelope.payload.truthfulCompetingQuoteId,
+    });
+
     const claimed = await client.call.updateMany({
       data: {
         failureCode: null,
@@ -729,6 +860,7 @@ export class WorkerOrchestrationService {
         job: specification,
         locale: call.locale,
         strategy: envelope.payload.strategy,
+        ...(truthfulLeverage === undefined ? {} : { truthfulLeverage }),
       },
       this.providerContext(envelope, context),
     );
@@ -1290,6 +1422,16 @@ export class WorkerOrchestrationService {
     const savedAmount =
       quote.discount?.currency === quote.totalPrice.currency ? discount : 0;
     await client.$transaction(async (transaction) => {
+      if (call.negotiationId !== null) {
+        await transaction.quote.updateMany({
+          data: { score: null, status: QuoteStatus.WITHDRAWN },
+          where: {
+            id: { not: quote.id },
+            negotiationId: call.negotiationId,
+            status: { not: QuoteStatus.WITHDRAWN },
+          },
+        });
+      }
       await transaction.quote.upsert({
         create: {
           businessId: call.businessId,
@@ -1400,7 +1542,11 @@ export class WorkerOrchestrationService {
     }
     if (run.status === NegotiationRunStatus.CANCELLED) return;
 
-    const candidates = run.quotes.flatMap((record) => {
+    const activeQuoteIds = selectLatestActiveQuoteIds(run.quotes);
+    const activeQuotes = run.quotes.filter((quote) =>
+      activeQuoteIds.has(quote.id),
+    );
+    const candidates = activeQuotes.flatMap((record) => {
       const quote = rankingQuoteContract(record);
       if (
         quote === undefined ||
@@ -1442,7 +1588,7 @@ export class WorkerOrchestrationService {
     const bestQuote =
       bestRanking === undefined
         ? undefined
-        : run.quotes.find((quote) => quote.id === bestRanking.quoteId);
+        : activeQuotes.find((quote) => quote.id === bestRanking.quoteId);
     const savings = bestQuote?.negotiatedSavingCents ?? 0;
     const explanation = bestQuote
       ? `${bestQuote.business.name} is the strongest evidenced value after price, completeness, confidence, reputation, and risk checks.`
@@ -1575,16 +1721,42 @@ export class WorkerOrchestrationService {
 
   async continueNegotiation(
     envelope: QueueJobEnvelope<"negotiation.continue">,
-    _context: QueueProcessingContext,
+    context: QueueProcessingContext,
   ): Promise<void> {
-    void _context;
+    try {
+      await this.continueNegotiationAttempt(envelope);
+    } catch (error) {
+      if (
+        error instanceof NonRetryableQueueError ||
+        context.attempt >= context.attemptsAllowed
+      ) {
+        try {
+          await this.compensateContinuationFailure(envelope, error);
+        } catch (compensationError) {
+          throw new AggregateError(
+            [error, compensationError],
+            "Negotiation continuation and its terminal compensation failed.",
+            { cause: compensationError },
+          );
+        }
+      }
+      throw error;
+    }
+  }
+
+  private async continueNegotiationAttempt(
+    envelope: QueueJobEnvelope<"negotiation.continue">,
+  ): Promise<void> {
     const provider = this.requireProvider(
       this.providers.calls,
       "negotiation continuation",
     );
     const client = this.database.client;
     const negotiation = await client.negotiation.findUnique({
-      include: { calls: { orderBy: { createdAt: "desc" } }, run: true },
+      include: {
+        calls: { orderBy: { createdAt: "desc" } },
+        run: { include: { job: true } },
+      },
       where: { id: envelope.payload.negotiationId },
     });
     if (
@@ -1596,54 +1768,13 @@ export class WorkerOrchestrationService {
         "The continuation job does not match its negotiation run.",
       );
     }
+    const run = negotiation.run;
     if (
-      TERMINAL_RUN_STATUSES.has(negotiation.run.status) ||
-      negotiation.run.status === NegotiationRunStatus.PAUSED
+      TERMINAL_RUN_STATUSES.has(run.status) ||
+      run.status === NegotiationRunStatus.PAUSED
     ) {
       return;
     }
-    if (negotiation.currentRound >= MAX_FOLLOW_UP_ROUNDS) return;
-
-    if (envelope.payload.currentQuoteId !== undefined) {
-      const currentQuote = await client.quote.findFirst({
-        include: { evidence: true },
-        where: {
-          id: envelope.payload.currentQuoteId,
-          negotiationId: negotiation.id,
-          runId: negotiation.run.id,
-        },
-      });
-      if (currentQuote === null || currentQuote.evidence.length === 0) {
-        throw new NonRetryableQueueError(
-          "The current quote is not an evidenced quote from this negotiation.",
-        );
-      }
-    }
-    if (envelope.payload.truthfulCompetingQuoteId !== undefined) {
-      const competingQuote = await client.quote.findFirst({
-        include: { evidence: true },
-        where: {
-          id: envelope.payload.truthfulCompetingQuoteId,
-          runId: negotiation.run.id,
-          status: { not: QuoteStatus.WITHDRAWN },
-        },
-      });
-      if (competingQuote === null || competingQuote.evidence.length === 0) {
-        throw new NonRetryableQueueError(
-          "Negotiation leverage must reference a real, evidenced quote from this run.",
-        );
-      }
-      if (competingQuote.businessId === negotiation.businessId) {
-        throw new NonRetryableQueueError(
-          "Competing leverage must come from a different business.",
-        );
-      }
-    }
-
-    const activeCall = negotiation.calls.find(
-      (call) => !TERMINAL_CALL_STATUSES.has(call.status),
-    );
-    if (activeCall !== undefined) return;
     const callId = deterministicId(
       "call",
       negotiation.id,
@@ -1652,6 +1783,49 @@ export class WorkerOrchestrationService {
     const existingCall = await client.call.findUnique({
       where: { id: callId },
     });
+    if (existingCall !== null) {
+      if (TERMINAL_CALL_STATUSES.has(existingCall.status)) {
+        await this.enqueueRank(
+          run.id,
+          `continuation-terminal:${existingCall.id}`,
+          envelope.traceId,
+        );
+        return;
+      }
+      if (existingCall.providerCallId !== null) {
+        await this.enqueuePlaceCall(
+          envelope,
+          {
+            businessId: negotiation.businessId,
+            runId: run.id,
+            specificationVersionId: run.specificationVersionId,
+            strategy: negotiation.strategy,
+          },
+          existingCall.id,
+        );
+        return;
+      }
+    }
+
+    if (
+      existingCall === null &&
+      negotiation.currentRound >= MAX_FOLLOW_UP_ROUNDS
+    )
+      return;
+    const activeCall = negotiation.calls.find(
+      (call) => call.id !== callId && !TERMINAL_CALL_STATUSES.has(call.status),
+    );
+    if (activeCall !== undefined) return;
+
+    await this.loadTruthfulLeverage({
+      businessId: negotiation.businessId,
+      currentQuoteId: envelope.payload.currentQuoteId,
+      expectedCurrency: run.job.currency,
+      negotiationId: negotiation.id,
+      runId: run.id,
+      truthfulCompetingQuoteId: envelope.payload.truthfulCompetingQuoteId,
+    });
+
     const nextRound =
       existingCall === null
         ? negotiation.currentRound + 1
@@ -1673,41 +1847,237 @@ export class WorkerOrchestrationService {
         }),
         client.call.create({
           data: {
-            aiDisclosureMadeAt: negotiation.run.aiDisclosureAcknowledgedAt,
+            aiDisclosureMadeAt: run.aiDisclosureAcknowledgedAt,
             businessId: negotiation.businessId,
             id: callId,
             jobId: negotiation.jobId,
             negotiationId: negotiation.id,
             provider: provider.name,
-            recordingConsentAt: negotiation.run.recordingConsentAt,
-            runId: negotiation.run.id,
+            recordingConsentAt: run.recordingConsentAt,
+            runId: run.id,
             status: DatabaseCallStatus.QUEUED,
           },
         }),
       ]);
     }
     await this.appendRunEvent(
-      negotiation.run.id,
+      run.id,
       "call.queued",
       AuditActor.WORKER,
       { businessId: negotiation.businessId, callId, round: nextRound },
       `${envelope.idempotencyKey}:call:${callId}`,
     );
+    await this.enqueuePlaceCall(
+      envelope,
+      {
+        businessId: negotiation.businessId,
+        runId: run.id,
+        specificationVersionId: run.specificationVersionId,
+        strategy: negotiation.strategy,
+      },
+      callId,
+    );
+  }
+
+  private async enqueuePlaceCall(
+    envelope: QueueJobEnvelope<"negotiation.continue">,
+    negotiation: {
+      readonly businessId: string;
+      readonly runId: string;
+      readonly specificationVersionId: string;
+      readonly strategy: DatabaseNegotiationStrategy;
+    },
+    callId: string,
+  ): Promise<void> {
     await this.queue.enqueue(
       createQueueJob(
         queueJobNames.placeCall,
         {
           businessId: negotiation.businessId,
           callId,
-          runId: negotiation.run.id,
-          specificationVersionId: negotiation.run.specificationVersionId,
+          currentQuoteId: envelope.payload.currentQuoteId,
+          runId: negotiation.runId,
+          specificationVersionId: negotiation.specificationVersionId,
           strategy: contractStrategy(negotiation.strategy),
+          truthfulCompetingQuoteId: envelope.payload.truthfulCompetingQuoteId,
         },
         {
           idempotencyKey: `${callId}:place`,
           traceId: envelope.traceId,
         },
       ),
+    );
+  }
+
+  private async loadTruthfulLeverage(input: {
+    readonly businessId: string;
+    readonly currentQuoteId: string | undefined;
+    readonly expectedCurrency: string;
+    readonly negotiationId: string | null;
+    readonly runId: string;
+    readonly truthfulCompetingQuoteId: string | undefined;
+  }): Promise<TruthfulCallLeverage | undefined> {
+    const hasCurrent = input.currentQuoteId !== undefined;
+    const hasCompeting = input.truthfulCompetingQuoteId !== undefined;
+    if (!hasCurrent && !hasCompeting) return undefined;
+    if (
+      !hasCurrent ||
+      !hasCompeting ||
+      input.negotiationId === null ||
+      input.currentQuoteId === undefined ||
+      input.truthfulCompetingQuoteId === undefined
+    ) {
+      throw new NonRetryableQueueError(
+        "Truthful follow-up calls require both quote identifiers and a negotiation.",
+      );
+    }
+
+    const [currentQuote, competingQuote] = await Promise.all([
+      this.client.quote.findUnique({
+        include: truthfulLeverageQuoteInclude,
+        where: { id: input.currentQuoteId },
+      }),
+      this.client.quote.findUnique({
+        include: truthfulLeverageQuoteInclude,
+        where: { id: input.truthfulCompetingQuoteId },
+      }),
+    ]);
+    const [latestCurrentQuote, latestCompetingQuote] = await Promise.all([
+      this.client.quote.findFirst({
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        select: { id: true },
+        where: { negotiationId: input.negotiationId, runId: input.runId },
+      }),
+      competingQuote === null || competingQuote.negotiationId === null
+        ? Promise.resolve(undefined)
+        : this.client.quote.findFirst({
+            orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+            select: { id: true },
+            where: {
+              negotiationId: competingQuote.negotiationId,
+              runId: input.runId,
+            },
+          }),
+    ]);
+
+    return validateTruthfulLeverageQuotes({
+      competingQuote:
+        competingQuote === null
+          ? null
+          : this.truthfulLeverageQuoteInput(competingQuote),
+      currentQuote:
+        currentQuote === null
+          ? null
+          : this.truthfulLeverageQuoteInput(currentQuote),
+      expectedBusinessId: input.businessId,
+      expectedCurrency: input.expectedCurrency,
+      expectedNegotiationId: input.negotiationId,
+      expectedRunId: input.runId,
+      latestCompetingQuoteId: latestCompetingQuote?.id,
+      latestCurrentQuoteId: latestCurrentQuote?.id,
+    });
+  }
+
+  private truthfulLeverageQuoteInput(
+    quote: TruthfulLeverageQuote,
+  ): TruthfulLeverageQuoteInput {
+    return {
+      businessId: quote.businessId,
+      businessName: quote.business.name,
+      createdAt: quote.createdAt,
+      currency: quote.currency,
+      evidence: quote.evidence,
+      id: quote.id,
+      negotiationBusinessId: quote.negotiation?.businessId ?? null,
+      negotiationId: quote.negotiationId,
+      negotiationRunId: quote.negotiation?.runId ?? null,
+      negotiationStatus: quote.negotiation?.status ?? null,
+      runId: quote.runId,
+      status: quote.status,
+      totalAmountCents: quote.totalAmountCents,
+    };
+  }
+
+  private async compensateContinuationFailure(
+    envelope: QueueJobEnvelope<"negotiation.continue">,
+    error: unknown,
+  ): Promise<void> {
+    const client = this.database.client;
+    const callId = deterministicId(
+      "call",
+      envelope.payload.negotiationId,
+      envelope.idempotencyKey,
+    );
+    const failureMessage =
+      error instanceof Error
+        ? error.message.slice(0, 500)
+        : "Negotiation continuation failed permanently.";
+    const shouldRank = await client.$transaction(async (transaction) => {
+      const call = await transaction.call.findUnique({
+        where: { id: callId },
+      });
+      if (
+        call !== null &&
+        (call.providerCallId !== null ||
+          (call.status !== DatabaseCallStatus.QUEUED &&
+            !TERMINAL_CALL_STATUSES.has(call.status)))
+      ) {
+        return false;
+      }
+      if (call !== null && TERMINAL_CALL_STATUSES.has(call.status)) return true;
+      const otherActiveCall = await transaction.call.findFirst({
+        where: {
+          id: { not: callId },
+          negotiationId: envelope.payload.negotiationId,
+          runId: envelope.payload.runId,
+          status: { notIn: [...TERMINAL_CALL_STATUSES] },
+        },
+      });
+      if (otherActiveCall !== null) return false;
+      if (call !== null && call.status === DatabaseCallStatus.QUEUED) {
+        await transaction.call.update({
+          data: {
+            endedAt: new Date(),
+            failureCode: "continuation_failed",
+            failureMessage,
+            status: DatabaseCallStatus.FAILED,
+            structuredOutcome: toJson({
+              outcome: "failed",
+              reason: failureMessage,
+              retryable: false,
+            }),
+          },
+          where: { id: call.id },
+        });
+      }
+      await transaction.negotiation.updateMany({
+        data: { endedAt: new Date(), status: NegotiationStatus.FAILED },
+        where: {
+          id: envelope.payload.negotiationId,
+          runId: envelope.payload.runId,
+          status: {
+            notIn: [NegotiationStatus.DECLINED, NegotiationStatus.FAILED],
+          },
+        },
+      });
+      return true;
+    });
+    if (!shouldRank) return;
+    await this.enqueueRank(
+      envelope.payload.runId,
+      `continuation-failed:${envelope.payload.negotiationId}`,
+      envelope.traceId,
+    );
+    await this.appendRunEvent(
+      envelope.payload.runId,
+      "negotiation.continuation_failed",
+      AuditActor.WORKER,
+      {
+        callId,
+        negotiationId: envelope.payload.negotiationId,
+        reason: failureMessage,
+      },
+      `${envelope.idempotencyKey}:terminal-failure`,
     );
   }
 

@@ -100,6 +100,13 @@ enum EvidenceKind {
   STRUCTURED_EXTRACTION
 }
 
+enum VoiceIntakeSessionStatus {
+  READY
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
 enum TurnSpeaker {
   AGENT
   BUSINESS
@@ -145,6 +152,7 @@ model Job {
   evidence              Evidence[]
   auditEvents           AuditEvent[]
   webhookEvents         WebhookEvent[]
+  voiceIntakeSessions   VoiceIntakeSession[]
   specificationVersions JobSpecificationVersion[]
   runs                  NegotiationRun[]
   createdAt             DateTime                  @default(now())
@@ -152,6 +160,22 @@ model Job {
 
   @@index([userId, createdAt])
   @@index([status, updatedAt])
+}
+
+/// A one-time binding between an authenticated Relay job and the provider-
+/// allocated conversation identifier returned with a signed interview URL.
+model VoiceIntakeSession {
+  id             String                   @id @default(cuid())
+  jobId          String
+  job            Job                      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  conversationId String                   @unique
+  status         VoiceIntakeSessionStatus @default(READY)
+  expiresAt      DateTime
+  completedAt    DateTime?
+  createdAt      DateTime                 @default(now())
+  updatedAt      DateTime                 @updatedAt
+
+  @@index([jobId, status, expiresAt])
 }
 
 /// Confirmed versions are append-only application records. Corrections create a

@@ -8,6 +8,15 @@ import type {
 
 import type { ProviderRequestContext, ProviderResult } from "./result.js";
 
+export interface TruthfulCallLeverage {
+  readonly competingBusinessName: string;
+  readonly competingQuoteAmountMinor: number;
+  readonly competingQuoteId: string;
+  readonly currency: string;
+  readonly currentQuoteAmountMinor: number;
+  readonly currentQuoteId: string;
+}
+
 export interface StartCallRequest {
   readonly business: Business;
   readonly callbackUrl: string;
@@ -18,6 +27,8 @@ export interface StartCallRequest {
   readonly job: JobSpecification;
   readonly locale: string;
   readonly strategy: NegotiationStrategy;
+  /** Evidence-backed leverage revalidated immediately before this call. */
+  readonly truthfulLeverage?: TruthfulCallLeverage;
 }
 
 export interface StartedCall {

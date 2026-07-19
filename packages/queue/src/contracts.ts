@@ -28,9 +28,13 @@ export interface CancelCallPayload {
 export interface PlaceCallPayload {
   readonly businessId: string;
   readonly callId: string;
+  /** Present together only for an evidence-backed follow-up call. */
+  readonly currentQuoteId?: string;
   readonly runId: string;
   readonly specificationVersionId: string;
   readonly strategy: NegotiationStrategy;
+  /** Present together only for an evidence-backed follow-up call. */
+  readonly truthfulCompetingQuoteId?: string;
 }
 
 export interface ProcessCallOutcomePayload {
@@ -51,11 +55,11 @@ export interface RankQuotesPayload {
 }
 
 export interface ContinueNegotiationPayload {
-  readonly currentQuoteId?: string;
+  readonly currentQuoteId: string;
   readonly negotiationId: string;
   readonly runId: string;
   /** Must refer to a real, evidenced quote; never synthesize leverage. */
-  readonly truthfulCompetingQuoteId?: string;
+  readonly truthfulCompetingQuoteId: string;
 }
 
 export interface QueuePayloadMap {
@@ -280,31 +284,43 @@ function isPayload(name: QueueJobName, value: unknown): boolean {
       );
     case "call.place":
       return (
-        hasExactlyKeys(value, [
-          "businessId",
-          "callId",
-          "runId",
-          "specificationVersionId",
-          "strategy",
-        ]) &&
+        hasExactlyKeys(
+          value,
+          [
+            "businessId",
+            "callId",
+            "runId",
+            "specificationVersionId",
+            "strategy",
+          ],
+          ["currentQuoteId", "truthfulCompetingQuoteId"],
+        ) &&
         hasIdentifiers(value, [
           "businessId",
           "callId",
           "runId",
           "specificationVersionId",
         ]) &&
+        hasOptionalIdentifierPair(
+          value.currentQuoteId,
+          value.truthfulCompetingQuoteId,
+        ) &&
         isNegotiationStrategy(value.strategy)
       );
     case "negotiation.continue":
       return (
-        hasExactlyKeys(
-          value,
-          ["negotiationId", "runId"],
-          ["currentQuoteId", "truthfulCompetingQuoteId"],
-        ) &&
-        hasIdentifiers(value, ["negotiationId", "runId"]) &&
-        isOptionalIdentifier(value.currentQuoteId) &&
-        isOptionalIdentifier(value.truthfulCompetingQuoteId)
+        hasExactlyKeys(value, [
+          "currentQuoteId",
+          "negotiationId",
+          "runId",
+          "truthfulCompetingQuoteId",
+        ]) &&
+        hasIdentifiers(value, [
+          "currentQuoteId",
+          "negotiationId",
+          "runId",
+          "truthfulCompetingQuoteId",
+        ])
       );
     case "quote.normalize":
       return (
@@ -320,6 +336,13 @@ function isPayload(name: QueueJobName, value: unknown): boolean {
 
 function isOptionalIdentifier(value: unknown): boolean {
   return value === undefined || isBoundedString(value, 1, 200);
+}
+
+function hasOptionalIdentifierPair(left: unknown, right: unknown): boolean {
+  return (
+    (left === undefined && right === undefined) ||
+    (isBoundedString(left, 1, 200) && isBoundedString(right, 1, 200))
+  );
 }
 
 function isNegotiationStrategy(value: unknown): value is NegotiationStrategy {

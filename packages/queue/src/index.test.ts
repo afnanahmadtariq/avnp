@@ -43,9 +43,48 @@ describe("queue contracts", () => {
     const policy = queueRetryPolicies[queueJobNames.processCallOutcome];
 
     expect(policy.backoff.type).toBe("fixed");
+    expect(policy.backoff.jitter).toBe(0);
     expect(policy.backoff.delay * (policy.attempts - 1)).toBeGreaterThanOrEqual(
       30 * 60 * 1_000,
     );
+  });
+
+  it("requires both truthful quote identifiers on follow-up jobs", () => {
+    const continuation = createQueueJob(
+      queueJobNames.continueNegotiation,
+      {
+        currentQuoteId: "quote_current",
+        negotiationId: "negotiation_1",
+        runId: "run_1",
+        truthfulCompetingQuoteId: "quote_competing",
+      },
+      { idempotencyKey: "negotiation_1:continue", traceId: "trace_1" },
+    );
+    const placement = createQueueJob(
+      queueJobNames.placeCall,
+      {
+        businessId: "business_1",
+        callId: "call_1",
+        currentQuoteId: "quote_current",
+        runId: "run_1",
+        specificationVersionId: "specification_version_1",
+        strategy: "fee_removal",
+        truthfulCompetingQuoteId: "quote_competing",
+      },
+      { idempotencyKey: "call_1:place", traceId: "trace_1" },
+    );
+
+    expect(parseQueueJobEnvelope(continuation)).toEqual(continuation);
+    expect(parseQueueJobEnvelope(placement)).toEqual(placement);
+    expect(() =>
+      parseQueueJobEnvelope({
+        ...placement,
+        payload: {
+          ...placement.payload,
+          truthfulCompetingQuoteId: undefined,
+        },
+      }),
+    ).toThrow(InvalidQueueJobError);
   });
 
   it("uses identifiers instead of embedding persistence records", () => {

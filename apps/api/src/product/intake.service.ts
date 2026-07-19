@@ -7,7 +7,11 @@ import {
   ServiceUnavailableException,
   UnprocessableEntityException,
 } from "@nestjs/common";
-import { EvidenceKind, type Prisma } from "@relay/database";
+import {
+  EvidenceKind,
+  VoiceIntakeSessionStatus,
+  type Prisma,
+} from "@relay/database";
 import type {
   EvidenceContentType,
   ExtractionFileContentType,
@@ -26,6 +30,7 @@ import { ProductService } from "./product.service.js";
 const MAXIMUM_DOCUMENT_BYTES = 20 * 1024 * 1024;
 const INTERVIEW_FINALIZATION_ATTEMPTS = 5;
 const INTERVIEW_FINALIZATION_DELAY_MS = 1_000;
+const INTERVIEW_SESSION_TTL_MS = 15 * 60 * 1_000;
 
 export interface IntakeUpload {
   readonly buffer: Buffer;
@@ -242,7 +247,18 @@ export class IntakeService {
       traceId,
     });
     if (!result.ok) this.throwProviderFailure(result.error, "voice");
-    return { available: true, mode: context.mode, signedUrl: result.value };
+    await this.prisma.client.voiceIntakeSession.create({
+      data: {
+        conversationId: result.value.conversationId,
+        expiresAt: new Date(Date.now() + INTERVIEW_SESSION_TTL_MS),
+        jobId: context.jobId,
+      },
+    });
+    return {
+      available: true,
+      mode: context.mode,
+      signedUrl: result.value.signedUrl,
+    };
   }
 
   async completeVoiceSession(
@@ -256,81 +272,128 @@ export class IntakeService {
       );
     }
 
+    const claimed = await this.prisma.client.voiceIntakeSession.updateMany({
+      data: { status: VoiceIntakeSessionStatus.PROCESSING },
+      where: {
+        conversationId,
+        expiresAt: { gt: new Date() },
+        jobId: context.jobId,
+        status: VoiceIntakeSessionStatus.READY,
+      },
+    });
+    if (claimed.count !== 1) {
+      throw new UnprocessableEntityException(
+        "This voice interview is expired, already processed, or does not belong to this request.",
+      );
+    }
+
     const traceId = randomUUID();
-    let snapshot = await this.providers.fetchFinishedConversation(
-      conversationId,
-      { requestId: traceId, traceId },
-    );
-    for (
-      let attempt = 1;
-      snapshot.ok &&
-      snapshot.value.status !== "completed" &&
-      !["cancelled", "failed"].includes(snapshot.value.status) &&
-      attempt < INTERVIEW_FINALIZATION_ATTEMPTS;
-      attempt += 1
-    ) {
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, INTERVIEW_FINALIZATION_DELAY_MS);
-      });
-      snapshot = await this.providers.fetchFinishedConversation(
+    let durableWritesStarted = false;
+    try {
+      let snapshot = await this.providers.fetchFinishedConversation(
         conversationId,
         { requestId: traceId, traceId },
       );
-    }
-    if (!snapshot.ok) this.throwProviderFailure(snapshot.error, "voice");
-    const transcript = snapshot.value.transcriptText?.trim();
-    if (snapshot.value.status !== "completed" || !transcript) {
-      throw new UnprocessableEntityException(
-        "Finish the voice interview before importing its answers.",
+      for (
+        let attempt = 1;
+        snapshot.ok &&
+        snapshot.value.status !== "completed" &&
+        !["cancelled", "failed"].includes(snapshot.value.status) &&
+        attempt < INTERVIEW_FINALIZATION_ATTEMPTS;
+        attempt += 1
+      ) {
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, INTERVIEW_FINALIZATION_DELAY_MS);
+        });
+        snapshot = await this.providers.fetchFinishedConversation(
+          conversationId,
+          { requestId: traceId, traceId },
+        );
+      }
+      if (!snapshot.ok) this.throwProviderFailure(snapshot.error, "voice");
+      const transcript = snapshot.value.transcriptText?.trim();
+      if (snapshot.value.status !== "completed" || !transcript) {
+        throw new UnprocessableEntityException(
+          "Finish the voice interview before importing its answers.",
+        );
+      }
+
+      const extractor = this.providers.extractionProvider;
+      if (!extractor) {
+        throw new ServiceUnavailableException(
+          "Voice interview extraction is temporarily unavailable.",
+        );
+      }
+      const extracted = await extractor.extractJobSpecification(
+        { input: { kind: "text", text: transcript } },
+        this.providers.createContext({ requestId: traceId, traceId }),
       );
-    }
+      if (!extracted.ok) this.throwProviderFailure(extracted.error, "voice");
 
-    const transcriptEvidenceId = randomUUID();
-    await this.persistEvidence({
-      body: new TextEncoder().encode(transcript),
-      contentType: "text/plain",
-      evidenceId: transcriptEvidenceId,
-      filename: "interview-transcript.txt",
-      jobId: context.jobId,
-      kind: EvidenceKind.TRANSCRIPT,
-      metadata: { conversationId, purpose: "job_specification_intake" },
-      mode: context.mode,
-      retentionDays: context.retentionDays,
-    });
+      durableWritesStarted = true;
+      const transcriptEvidenceId = randomUUID();
+      await this.persistEvidence({
+        body: new TextEncoder().encode(transcript),
+        contentType: "text/plain",
+        evidenceId: transcriptEvidenceId,
+        filename: "interview-transcript.txt",
+        jobId: context.jobId,
+        kind: EvidenceKind.TRANSCRIPT,
+        metadata: { conversationId, purpose: "job_specification_intake" },
+        mode: context.mode,
+        retentionDays: context.retentionDays,
+      });
 
-    const extractor = this.providers.extractionProvider;
-    if (!extractor) {
-      throw new ServiceUnavailableException(
-        "Voice interview extraction is temporarily unavailable.",
+      const structuredEvidenceId = randomUUID();
+      await this.persistEvidence({
+        body: new TextEncoder().encode(JSON.stringify(extracted.value)),
+        contentType: "application/json",
+        evidenceId: structuredEvidenceId,
+        filename: "extraction.json",
+        jobId: context.jobId,
+        kind: EvidenceKind.STRUCTURED_EXTRACTION,
+        metadata: {
+          conversationId,
+          purpose: "job_specification_extraction",
+          sourceEvidenceId: transcriptEvidenceId,
+        },
+        mode: context.mode,
+        retentionDays: context.retentionDays,
+      });
+      const result = await this.product.applyIntakeExtraction(
+        publicId,
+        extracted.value,
+        {
+          evidenceIds: [transcriptEvidenceId, structuredEvidenceId],
+          kind: "voice",
+          provider: extractor.name,
+        },
       );
+      await this.prisma.client.voiceIntakeSession.update({
+        data: {
+          completedAt: new Date(),
+          status: VoiceIntakeSessionStatus.COMPLETED,
+        },
+        where: { conversationId },
+      });
+      return result;
+    } catch (error: unknown) {
+      await this.prisma.client.voiceIntakeSession
+        .updateMany({
+          data: {
+            status: durableWritesStarted
+              ? VoiceIntakeSessionStatus.FAILED
+              : VoiceIntakeSessionStatus.READY,
+          },
+          where: {
+            conversationId,
+            jobId: context.jobId,
+            status: VoiceIntakeSessionStatus.PROCESSING,
+          },
+        })
+        .catch(() => undefined);
+      throw error;
     }
-    const extracted = await extractor.extractJobSpecification(
-      { input: { kind: "text", text: transcript } },
-      this.providers.createContext({ requestId: traceId, traceId }),
-    );
-    if (!extracted.ok) this.throwProviderFailure(extracted.error, "voice");
-
-    const structuredEvidenceId = randomUUID();
-    await this.persistEvidence({
-      body: new TextEncoder().encode(JSON.stringify(extracted.value)),
-      contentType: "application/json",
-      evidenceId: structuredEvidenceId,
-      filename: "extraction.json",
-      jobId: context.jobId,
-      kind: EvidenceKind.STRUCTURED_EXTRACTION,
-      metadata: {
-        conversationId,
-        purpose: "job_specification_extraction",
-        sourceEvidenceId: transcriptEvidenceId,
-      },
-      mode: context.mode,
-      retentionDays: context.retentionDays,
-    });
-    return this.product.applyIntakeExtraction(publicId, extracted.value, {
-      evidenceIds: [transcriptEvidenceId, structuredEvidenceId],
-      kind: "voice",
-      provider: extractor.name,
-    });
   }
 
   private async persistEvidence(input: {

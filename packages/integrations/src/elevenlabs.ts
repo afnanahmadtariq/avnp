@@ -31,6 +31,20 @@ const DEFAULT_API_BASE_URL = "https://api.elevenlabs.io/v1";
 const DEFAULT_TWILIO_API_BASE_URL = "https://api.twilio.com/2010-04-01";
 const DEFAULT_MAX_RECORDING_BYTES = 50 * 1_024 * 1_024;
 
+function majorUnitAmount(amountMinor: number, currency: string): string {
+  let fractionDigits = 2;
+  try {
+    fractionDigits =
+      new Intl.NumberFormat("en-US", {
+        currency,
+        style: "currency",
+      }).resolvedOptions().maximumFractionDigits ?? fractionDigits;
+  } catch {
+    // ISO-like custom currencies retain the application's two-decimal default.
+  }
+  return (amountMinor / 10 ** fractionDigits).toFixed(fractionDigits);
+}
+
 export interface ElevenLabsCallConfig {
   readonly agentId: string;
   readonly agentPhoneNumberId: string;
@@ -442,6 +456,7 @@ export class ElevenLabsTwilioCallProvider implements CallProvider {
         ? {}
         : { prompt: { prompt: this.#promptOverride } }),
     };
+    const leverage = request.truthfulLeverage;
     const body = {
       agent_id: this.#agentId,
       agent_phone_number_id: this.#agentPhoneNumberId,
@@ -452,11 +467,30 @@ export class ElevenLabsTwilioCallProvider implements CallProvider {
           relay_business_id: request.business.id,
           relay_business_name: request.business.name,
           relay_callback_url: request.callbackUrl,
+          relay_competing_business_name: leverage?.competingBusinessName ?? "",
+          relay_competing_quote_amount:
+            leverage === undefined
+              ? ""
+              : majorUnitAmount(
+                  leverage.competingQuoteAmountMinor,
+                  leverage.currency,
+                ),
+          relay_competing_quote_id: leverage?.competingQuoteId ?? "",
+          relay_current_quote_amount:
+            leverage === undefined
+              ? ""
+              : majorUnitAmount(
+                  leverage.currentQuoteAmountMinor,
+                  leverage.currency,
+                ),
+          relay_current_quote_id: leverage?.currentQuoteId ?? "",
           relay_identify_as_ai_when_asked:
             request.disclosure.identifyAsAiWhenAsked,
+          relay_is_follow_up: leverage !== undefined,
           relay_job_specification: JSON.stringify(request.job),
           relay_locale: request.locale,
           relay_negotiation_strategy: request.strategy,
+          relay_quote_currency: leverage?.currency ?? "",
           relay_recording_disclosure: request.disclosure.recordingDisclosure,
           relay_request_id: context.requestId,
           relay_trace_id: context.traceId,

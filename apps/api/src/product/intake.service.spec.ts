@@ -23,19 +23,42 @@ function createService() {
       extraction,
       job: { publicId: "RLY-TEST" },
     })),
-    getIntakeContext: vi.fn(async () => ({
-      jobId: "job-1",
-      mode: "fixture" as const,
-      retentionDays: 30,
-    })),
+    getIntakeContext: vi.fn(
+      async (): Promise<{
+        jobId: string;
+        mode: "fixture" | "live";
+        retentionDays: number;
+      }> => ({
+        jobId: "job-1",
+        mode: "fixture",
+        retentionDays: 30,
+      }),
+    ),
   };
   const evidenceCreate = vi.fn(async () => ({ id: "evidence-1" }));
-  const prisma = { client: { evidence: { create: evidenceCreate } } };
+  const voiceSessionCreate = vi.fn(async () => ({ id: "voice-session-1" }));
+  const voiceSessionUpdate = vi.fn(async () => ({ id: "voice-session-1" }));
+  const voiceSessionUpdateMany = vi.fn(async () => ({ count: 1 }));
+  const prisma = {
+    client: {
+      evidence: { create: evidenceCreate },
+      voiceIntakeSession: {
+        create: voiceSessionCreate,
+        update: voiceSessionUpdate,
+        updateMany: voiceSessionUpdateMany,
+      },
+    },
+  };
   const providers = {
     createContext: vi.fn(),
     createSignedInterviewUrl: vi.fn(),
     evidenceStorage: undefined,
-    extractionProvider: undefined,
+    extractionProvider: undefined as
+      | {
+          extractJobSpecification: ReturnType<typeof vi.fn>;
+          name: string;
+        }
+      | undefined,
     fetchFinishedConversation: vi.fn(),
   };
   const service = new IntakeService(
@@ -43,7 +66,15 @@ function createService() {
     prisma as never,
     providers as never,
   );
-  return { evidenceCreate, product, service };
+  return {
+    evidenceCreate,
+    product,
+    providers,
+    service,
+    voiceSessionCreate,
+    voiceSessionUpdate,
+    voiceSessionUpdateMany,
+  };
 }
 
 describe("IntakeService", () => {
@@ -84,5 +115,102 @@ describe("IntakeService", () => {
     await expect(
       service.completeVoiceSession("RLY-TEST", "conversation-1"),
     ).rejects.toBeInstanceOf(UnprocessableEntityException);
+  });
+
+  it("binds a provider-allocated conversation to the owned job before returning its URL", async () => {
+    const { product, providers, service, voiceSessionCreate } = createService();
+    product.getIntakeContext.mockResolvedValueOnce({
+      jobId: "job-1",
+      mode: "live",
+      retentionDays: 30,
+    });
+    providers.createSignedInterviewUrl.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        conversationId: "conversation-1",
+        signedUrl: "wss://api.elevenlabs.io/signed",
+      },
+    });
+
+    await expect(service.createVoiceSession("RLY-TEST")).resolves.toEqual({
+      available: true,
+      mode: "live",
+      signedUrl: "wss://api.elevenlabs.io/signed",
+    });
+    expect(voiceSessionCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        conversationId: "conversation-1",
+        jobId: "job-1",
+      }),
+    });
+  });
+
+  it("refuses to fetch a conversation that was not claimed for the owned job", async () => {
+    const { product, providers, service, voiceSessionUpdateMany } =
+      createService();
+    product.getIntakeContext.mockResolvedValueOnce({
+      jobId: "job-1",
+      mode: "live",
+      retentionDays: 30,
+    });
+    voiceSessionUpdateMany.mockResolvedValueOnce({ count: 0 });
+
+    await expect(
+      service.completeVoiceSession("RLY-TEST", "conversation-other"),
+    ).rejects.toBeInstanceOf(UnprocessableEntityException);
+    expect(providers.fetchFinishedConversation).not.toHaveBeenCalled();
+  });
+
+  it("consumes a bound interview exactly once after transcript extraction", async () => {
+    const {
+      evidenceCreate,
+      product,
+      providers,
+      service,
+      voiceSessionUpdate,
+      voiceSessionUpdateMany,
+    } = createService();
+    product.getIntakeContext.mockResolvedValueOnce({
+      jobId: "job-1",
+      mode: "live",
+      retentionDays: 30,
+    });
+    providers.createContext.mockReturnValue({
+      requestId: "request-1",
+      traceId: "trace-1",
+    });
+    providers.fetchFinishedConversation.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        providerCallId: "conversation-1",
+        status: "completed",
+        transcriptText: "Business: I need a two-bedroom move.",
+        updatedAt: "2026-07-19T00:00:00.000Z",
+      },
+    });
+    providers.extractionProvider = {
+      extractJobSpecification: vi.fn(async () => ({
+        ok: true,
+        value: {
+          confidence: 0.9,
+          facts: { vertical: "moving" },
+        },
+      })),
+      name: "openai-responses",
+    };
+
+    await service.completeVoiceSession("RLY-TEST", "conversation-1");
+
+    expect(evidenceCreate).toHaveBeenCalledTimes(2);
+    expect(voiceSessionUpdate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ status: "COMPLETED" }),
+      where: { conversationId: "conversation-1" },
+    });
+
+    voiceSessionUpdateMany.mockResolvedValueOnce({ count: 0 });
+    await expect(
+      service.completeVoiceSession("RLY-TEST", "conversation-1"),
+    ).rejects.toBeInstanceOf(UnprocessableEntityException);
+    expect(providers.fetchFinishedConversation).toHaveBeenCalledTimes(1);
   });
 });

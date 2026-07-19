@@ -132,6 +132,7 @@ describe("ProviderCompositionService", () => {
       if (url.includes("get-signed-url")) {
         return new Response(
           JSON.stringify({
+            conversation_id: "conversation-1",
             signed_url:
               "wss://api.elevenlabs.io/v1/convai/conversation?conversation_signature=signed-token",
           }),
@@ -176,11 +177,17 @@ describe("ProviderCompositionService", () => {
 
     expect(signed).toEqual({
       ok: true,
-      value:
-        "wss://api.elevenlabs.io/v1/convai/conversation?conversation_signature=signed-token",
+      value: {
+        conversationId: "conversation-1",
+        signedUrl:
+          "wss://api.elevenlabs.io/v1/convai/conversation?conversation_signature=signed-token",
+      },
     });
     expect(String(fetcher.mock.calls[0]?.[0])).toContain(
       "agent_id=interview-agent",
+    );
+    expect(String(fetcher.mock.calls[0]?.[0])).toContain(
+      "include_conversation_id=true",
     );
     expect(String(fetcher.mock.calls[0]?.[0])).not.toContain(
       "elevenlabs-secret",
