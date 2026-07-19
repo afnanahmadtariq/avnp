@@ -4,11 +4,11 @@ Relay is an AI purchasing agent that gathers comparable phone quotes, negotiates
 
 The first product experience focuses on moving services: a customer confirms one complete job brief, Relay contacts multiple movers with the same facts, normalizes every fee, and explains the strongest deal without inventing leverage.
 
-| 60-second product demo                                                                                     | 59-second technical overview                                                                                                       |
-| ---------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Product demo                                                                                     | Technical overview                                                                                                       |
+| ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
 | [![Watch the Relay product demo](assets/demo/relay-demo-poster.png)](assets/demo/relay-demo.mp4) | [![Watch the Relay technical overview](assets/demo/relay-tech-overview-poster.png)](assets/demo/relay-tech-overview.mp4) |
 
-[Watch the 60-second product demo](assets/demo/relay-demo.mp4) · [Watch the 59-second technical overview](assets/demo/relay-tech-overview.mp4)
+[Watch the product demo](assets/demo/relay-demo.mp4) · [Watch the technical overview](assets/demo/relay-tech-overview.mp4)
 
 ## Product walkthrough
 

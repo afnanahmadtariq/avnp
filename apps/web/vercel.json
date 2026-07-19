@@ -1,5 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "cd ../.. && pnpm turbo run build --filter=@relay/web",
-  "framework": "nuxtjs"
+  "framework": "nuxtjs",
+  "outputDirectory": ".vercel/output"
 }
