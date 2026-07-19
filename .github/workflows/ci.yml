@@ -37,6 +37,9 @@ jobs:
       - name: Test production smoke checker
         run: node --test scripts/smoke-production.test.mjs
 
+      - name: Test production deployment script
+        run: node --test infra/production/deploy.test.mjs
+
       - name: Check formatting
         run: pnpm format:check
 

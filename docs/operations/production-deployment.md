@@ -178,7 +178,8 @@ The VM must meet this baseline:
 | Requirement       | Production configuration                                                                                     |
 | ----------------- | ------------------------------------------------------------------------------------------------------------ |
 | Architecture      | `linux/amd64`; the workflow currently publishes an AMD64 image                                               |
-| Runtime           | Docker Engine running at boot and the `docker compose` plugin                                                |
+| Runtime           | Docker Engine running at boot, the `docker compose` plugin, and GNU `timeout`                                |
+| Storage           | At least 1 GiB free in Docker's data-root before each release                                                |
 | Deploy account    | Non-root user with the dedicated Actions public key in `authorized_keys` and permission to run Docker        |
 | Deploy directory  | `/opt/relay` or the exact `VM_DEPLOY_PATH`, owned by the deploy user with mode `0750`                        |
 | Inbound firewall  | SSH TCP on `VM_PORT`, TCP 80/443, and UDP 443; never expose API port 4000                                    |
@@ -243,10 +244,15 @@ On an eligible release, the workflow:
 4. materializes `PROD_ENV_FILE` without logging it;
 5. copies the production Compose and Caddy files and overwrites `VM_DEPLOY_PATH/.env` over SSH;
 6. sets `.env` to mode `0600` and tells Compose to use it;
-7. pulls the immutable SHA image and replaces the API and worker;
-8. preserves the Caddy volumes and waits for all container health checks before reporting success.
+7. removes only stale Relay runtime images while retaining the active and previous releases;
+8. verifies at least 1 GiB is free in Docker's data-root;
+9. pulls the immutable SHA image with three bounded attempts and quiet progress output;
+10. replaces the API and worker, preserves the Caddy volumes, and waits for all container health checks;
+11. records the prior release configuration and reports startup logs automatically if health checks fail.
 
 If the replacement fails its Compose health checks, the workflow retains the prior release reference and attempts to restore that image using the newly uploaded `.env`. Because the workflow overwrites `.env` on every deployment, configuration is not rolled back automatically. Treat the workflow as failed until the operator verifies the service and restores `PROD_ENV_FILE` if configuration caused the failure.
+
+The activation connection uses SSH keepalives. Each registry pull is limited to ten minutes and retried up to three times with backoff, while the deployment job has enough time for those retries plus health-check rollback. Before pulling, the deployment removes old images only from the Relay runtime repository and prunes dangling images carrying this repository's OCI source label; it never runs a host-wide `docker system prune` and never removes Caddy volumes. If storage remains below the minimum, the job fails before changing containers and prints Docker storage diagnostics.
 
 Vercel deploys the same `main` commit independently. Confirm both Vercel and VM deployments before treating a release as complete.
 

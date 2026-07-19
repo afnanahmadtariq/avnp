@@ -80,7 +80,7 @@ jobs:
   deploy:
     needs: image
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
     environment: production
     permissions:
       contents: read
@@ -120,28 +120,39 @@ jobs:
         run: |
           ssh -i "$RUNNER_TEMP/relay-ssh/key" \
             -o BatchMode=yes \
+            -o ConnectTimeout=15 \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=20 \
             -o UserKnownHostsFile="$RUNNER_TEMP/relay-ssh/known_hosts" \
             -p "$VM_PORT" \
             "$VM_USER@$VM_HOST" \
             "install -d -m 750 '$VM_DEPLOY_PATH'"
           scp -i "$RUNNER_TEMP/relay-ssh/key" \
             -o BatchMode=yes \
+            -o ConnectTimeout=15 \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=20 \
             -o UserKnownHostsFile="$RUNNER_TEMP/relay-ssh/known_hosts" \
             -P "$VM_PORT" \
             infra/production/compose.yaml \
             infra/production/Caddyfile \
+            infra/production/deploy.sh \
             "$RUNNER_TEMP/relay-deploy/.env" \
             "$VM_USER@$VM_HOST:$VM_DEPLOY_PATH/"
           ssh -i "$RUNNER_TEMP/relay-ssh/key" \
             -o BatchMode=yes \
+            -o ConnectTimeout=15 \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=20 \
             -o UserKnownHostsFile="$RUNNER_TEMP/relay-ssh/known_hosts" \
             -p "$VM_PORT" \
             "$VM_USER@$VM_HOST" \
-            "chmod 600 '$VM_DEPLOY_PATH/.env' && test -s '$VM_DEPLOY_PATH/.env'"
+            "chmod 600 '$VM_DEPLOY_PATH/.env' && chmod 700 '$VM_DEPLOY_PATH/deploy.sh' && test -s '$VM_DEPLOY_PATH/.env'"
 
       - name: Activate verified release
         env:
           IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.RELEASE_SHA }}
+          IMAGE_SOURCE: ${{ github.server_url }}/${{ github.repository }}
           VM_DEPLOY_PATH: ${{ secrets.VM_DEPLOY_PATH }}
           VM_HOST: ${{ secrets.VM_HOST }}
           VM_PORT: ${{ secrets.VM_PORT }}
@@ -149,40 +160,13 @@ jobs:
         run: |
           ssh -i "$RUNNER_TEMP/relay-ssh/key" \
             -o BatchMode=yes \
+            -o ConnectTimeout=15 \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=20 \
             -o UserKnownHostsFile="$RUNNER_TEMP/relay-ssh/known_hosts" \
             -p "$VM_PORT" \
             "$VM_USER@$VM_HOST" \
-            "RELAY_IMAGE='$IMAGE_REF' VM_DEPLOY_PATH='$VM_DEPLOY_PATH' sh -s" <<'REMOTE'
-          set -eu
-          cd "$VM_DEPLOY_PATH"
-          test -s .env
-
-          printf '%s\n' \
-            "RELAY_IMAGE=$RELAY_IMAGE" \
-            'RELAY_ENV_FILE=.env' \
-            > .release.env.next
-
-          docker compose --env-file .release.env.next -f compose.yaml config --quiet
-          docker compose --env-file .release.env.next -f compose.yaml pull
-
-          if docker compose \
-            --env-file .release.env.next \
-            -f compose.yaml \
-            up -d --remove-orphans --wait --wait-timeout 180; then
-            mv .release.env.next .release.env
-            docker compose --env-file .release.env -f compose.yaml ps
-            exit 0
-          fi
-
-          rm -f .release.env.next
-          if test -s .release.env; then
-            docker compose \
-              --env-file .release.env \
-              -f compose.yaml \
-              up -d --remove-orphans --wait --wait-timeout 180
-          fi
-          exit 1
-          REMOTE
+            "RELAY_IMAGE='$IMAGE_REF' RELAY_IMAGE_SOURCE='$IMAGE_SOURCE' VM_DEPLOY_PATH='$VM_DEPLOY_PATH' sh '$VM_DEPLOY_PATH/deploy.sh'"
 
       - name: Remove runner environment copy
         if: always()
