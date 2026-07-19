@@ -5,9 +5,11 @@ set -eu
 PULL_ATTEMPTS=${RELAY_PULL_ATTEMPTS:-3}
 PULL_TIMEOUT_SECONDS=${RELAY_PULL_TIMEOUT_SECONDS:-600}
 PULL_BACKOFF_SECONDS=${RELAY_PULL_BACKOFF_SECONDS:-15}
+SCHEMA_TIMEOUT_SECONDS=${RELAY_SCHEMA_TIMEOUT_SECONDS:-180}
 HEALTH_TIMEOUT_SECONDS=${RELAY_HEALTH_TIMEOUT_SECONDS:-300}
 MIN_FREE_KB=${RELAY_MIN_FREE_KB:-1048576}
 RELAY_IMAGE_SOURCE=${RELAY_IMAGE_SOURCE:-}
+SCHEMA_CONTAINER_NAME=relay-schema-sync
 
 fail() {
   printf 'Relay deployment error: %s\n' "$*" >&2
@@ -28,6 +30,7 @@ require_positive_integer() {
 require_positive_integer RELAY_PULL_ATTEMPTS "$PULL_ATTEMPTS"
 require_positive_integer RELAY_PULL_TIMEOUT_SECONDS "$PULL_TIMEOUT_SECONDS"
 require_positive_integer RELAY_PULL_BACKOFF_SECONDS "$PULL_BACKOFF_SECONDS"
+require_positive_integer RELAY_SCHEMA_TIMEOUT_SECONDS "$SCHEMA_TIMEOUT_SECONDS"
 require_positive_integer RELAY_HEALTH_TIMEOUT_SECONDS "$HEALTH_TIMEOUT_SECONDS"
 require_positive_integer RELAY_MIN_FREE_KB "$MIN_FREE_KB"
 
@@ -51,8 +54,13 @@ if test -s .release.env; then
   PREVIOUS_IMAGE=$(sed -n 's/^RELAY_IMAGE=//p' .release.env | head -n 1)
 fi
 
-cleanup_next_release() {
+remove_schema_container() {
+  docker container rm --force "$SCHEMA_CONTAINER_NAME" >/dev/null 2>&1 || true
+}
+
+cleanup_deployment() {
   rm -f .release.env.next
+  remove_schema_container
 }
 
 print_storage_diagnostics() {
@@ -108,6 +116,36 @@ pull_release() {
   done
 }
 
+sync_database_schema() {
+  printf 'Synchronizing the production database schema from the verified release.\n'
+  remove_schema_container
+
+  if timeout "$SCHEMA_TIMEOUT_SECONDS" \
+    docker run --rm \
+      --name "$SCHEMA_CONTAINER_NAME" \
+      --env-file "$VM_DEPLOY_PATH/.env" \
+      --env CI=true \
+      --env CHECKPOINT_DISABLE=1 \
+      --env HOME=/tmp \
+      --env XDG_CACHE_HOME=/tmp/.cache \
+      --read-only \
+      --tmpfs /tmp:rw,noexec,nosuid,size=64m,mode=1777 \
+      --security-opt no-new-privileges:true \
+      --cap-drop ALL \
+      --entrypoint /opt/relay/schema-admin/node_modules/.bin/prisma \
+      "$RELAY_IMAGE" \
+      db push --config /opt/relay/schema-admin/prisma.config.ts; then
+    return 0
+  else
+    schema_status=$?
+  fi
+
+  remove_schema_container
+  printf 'Database schema synchronization failed with exit code %s.\n' \
+    "$schema_status" >&2
+  return "$schema_status"
+}
+
 prune_stale_relay_images
 
 DOCKER_ROOT=$(docker info --format '{{.DockerRootDir}}')
@@ -131,13 +169,17 @@ printf '%s\n' \
   'RELAY_ENV_FILE=.env' \
   >.release.env.next
 
-trap cleanup_next_release EXIT HUP INT TERM
+trap cleanup_deployment EXIT HUP INT TERM
 
 docker compose --env-file .release.env.next -f compose.yaml config --quiet
 
 if ! pull_release; then
   print_storage_diagnostics
   fail "unable to pull the release images"
+fi
+
+if ! sync_database_schema; then
+  fail "unable to synchronize the production database schema"
 fi
 
 if docker compose \

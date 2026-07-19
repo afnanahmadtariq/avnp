@@ -31,6 +31,7 @@ API and worker
 The checked-in production artifacts are:
 
 - [`infra/production/Dockerfile`](../../infra/production/Dockerfile) builds the shared API/worker runtime image.
+- [`packages/schema-admin`](../../packages/schema-admin) supplies the pinned, production-only Prisma CLI payload used during release activation.
 - [`infra/production/compose.yaml`](../../infra/production/compose.yaml) runs the API, worker, and Caddy on the VM.
 - [`infra/production/Caddyfile`](../../infra/production/Caddyfile) terminates HTTPS for the API and proxies only to the API container.
 - [`.github/workflows/deploy-vm.yml`](../../.github/workflows/deploy-vm.yml) builds the runtime image, publishes it to GHCR, and updates the VM.
@@ -247,40 +248,35 @@ On an eligible release, the workflow:
 7. removes only stale Relay runtime images while retaining the active and previous releases;
 8. verifies at least 1 GiB is free in Docker's data-root;
 9. pulls the immutable SHA image with three bounded attempts and quiet progress output;
-10. replaces the API and worker, preserves the Caddy volumes, and waits for all container health checks;
-11. records the prior release configuration and reports startup logs automatically if health checks fail.
+10. runs the verified release's Prisma schema push in a bounded, one-off container;
+11. replaces the API and worker, preserves the Caddy volumes, and waits for all container health checks;
+12. records the prior release configuration and reports startup logs automatically if health checks fail.
 
 If the replacement fails its Compose health checks, the workflow retains the prior release reference and attempts to restore that image using the newly uploaded `.env`. Because the workflow overwrites `.env` on every deployment, configuration is not rolled back automatically. Treat the workflow as failed until the operator verifies the service and restores `PROD_ENV_FILE` if configuration caused the failure.
 
 The activation connection uses SSH keepalives. Each registry pull is limited to ten minutes and retried up to three times with backoff, while the deployment job has enough time for those retries plus health-check rollback. Before pulling, the deployment removes old images only from the Relay runtime repository and prunes dangling images carrying this repository's OCI source label; it never runs a host-wide `docker system prune` and never removes Caddy volumes. If storage remains below the minimum, the job fails before changing containers and prints Docker storage diagnostics.
 
+Schema synchronization is limited to three minutes by default and runs exactly once before service replacement. A stale or timed-out schema container is force-removed by its dedicated name. If schema synchronization fails, the deployment stops without running Compose `up`, leaves the prior release reference unchanged, and does not retry a potentially partial database operation automatically.
+
 Vercel deploys the same `main` commit independently. Confirm both Vercel and VM deployments before treating a release as complete.
 
 The workflow deliberately does not require the public hostname during the first infrastructure deployment because DNS may not exist yet. After `api.zerotools.online` is configured, the public health request in the verification section is the required Caddy, certificate, DNS, and optional Cloudflare integration check.
 
-## 6. Initialize the empty production database
+## 6. Production schema synchronization
 
-Relay intentionally has no Prisma migrations directory and does not run migration commands. The production release process uses reviewed schema push against a backed-up database.
+Relay intentionally has no Prisma migrations directory and does not run migration commands. Every VM release uses the schema and pinned Prisma CLI carried by the same immutable Git SHA image, then runs `prisma db push` from a short-lived container before API or worker replacement.
 
-For the first release:
+Before the first release:
 
 1. Provision a new, empty PostgreSQL 18 database.
 2. Verify TLS, automated backups, and a tested restore path.
-3. Review `packages/database/prisma/schema.prisma` and the target connection string.
-4. On a trusted administrator workstation, check out the exact release SHA, install the frozen workspace, and generate Prisma Client.
-5. Keep `.env.prod` at the repository root with mode `0600`, review the target URL one final time, and apply the schema with Node's environment-file loader:
+3. Give the `DATABASE_URL` role TLS access plus the DDL privileges needed to create and alter Relay objects in the target schema.
+4. Review `packages/database/prisma/schema.prisma`, the target connection string, and a current backup before approving the release.
+5. Deploy normally. The release will create the empty schema before starting the API and worker.
 
-   ```bash
-   corepack pnpm install --frozen-lockfile
-   corepack pnpm db:generate
-   node --env-file=.env.prod ./node_modules/turbo/bin/turbo run db:push --filter=@relay/database
-   ```
+The deployment never invokes `migrate`, `db:reset`, `db:seed`, `--force-reset`, or `--accept-data-loss`. Prisma therefore refuses a change that requires explicit data-loss acceptance. Do not bypass that gate in CI or on the VM.
 
-6. Deploy the immutable runtime image to the VM and run the health checks below.
-
-The production runtime image is intentionally minimal and does not carry the Prisma CLI or repository source. Schema administration happens from the reviewed release checkout, not from a long-running API or worker container.
-
-Do not run `pnpm db:reset` or `pnpm db:seed` against production. `db:reset` deletes data. For every later schema change, take and verify a fresh backup, drain the worker when needed, review the Prisma diff, run `db:push` as a separately approved maintenance action, and verify a restore rehearsal before promotion.
+`db push` has no schema rollback history. Every automated change must be backward-compatible and expand-only so the prior application image can still run after a health-check rollback. For a non-compatible change, use an explicitly planned maintenance window with a verified database backup and restore rehearsal; do not encode destructive acceptance into the deployment workflow.
 
 ## 7. Configure ElevenLabs after the API is public
 

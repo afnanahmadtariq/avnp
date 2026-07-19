@@ -1,0 +1,14 @@
+{
+  "name": "@relay/schema-admin",
+  "version": "0.0.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "description": "Production-only Prisma schema administration payload for Relay",
+  "type": "module",
+  "dependencies": {
+    "prisma": "7.8.0"
+  },
+  "engines": {
+    "node": "24.x"
+  }
+}

@@ -40,6 +40,7 @@ const createFixture = async (
     imageList = "",
     previousImage,
     pullFailures = 0,
+    schemaFailures = 0,
     upFailures = 0,
   } = {},
 ) => {
@@ -49,6 +50,7 @@ const createFixture = async (
   const dockerRoot = join(root, "docker");
   const dockerLog = join(root, "docker.log");
   const pullCount = join(root, "pull-count");
+  const schemaCount = join(root, "schema-count");
   const upCount = join(root, "up-count");
 
   t.after(async () => {
@@ -92,6 +94,15 @@ fi
 
 if test "\${1:-}" = image; then
   exit 0
+fi
+
+if test "\${1:-}" = run; then
+  count=0
+  test ! -s "$MOCK_SCHEMA_COUNT" || count=$(cat "$MOCK_SCHEMA_COUNT")
+  count=$((count + 1))
+  printf '%s\n' "$count" > "$MOCK_SCHEMA_COUNT"
+  test "$count" -gt "$MOCK_SCHEMA_FAILURES"
+  exit
 fi
 
 case " $* " in
@@ -151,6 +162,8 @@ exit 0
     MOCK_IMAGE_LIST: imageList,
     MOCK_PULL_COUNT: pullCount,
     MOCK_PULL_FAILURES: String(pullFailures),
+    MOCK_SCHEMA_COUNT: schemaCount,
+    MOCK_SCHEMA_FAILURES: String(schemaFailures),
     MOCK_UP_COUNT: upCount,
     MOCK_UP_FAILURES: String(upFailures),
     PATH: `${bin}:${process.env.PATH}`,
@@ -169,7 +182,14 @@ exit 0
   const dockerCommands = async () =>
     (await readFile(dockerLog, "utf8")).trim().split("\n");
 
-  return { deployPath, dockerCommands, pullCount, run, upCount };
+  return {
+    deployPath,
+    dockerCommands,
+    pullCount,
+    run,
+    schemaCount,
+    upCount,
+  };
 };
 
 test("promotes a healthy release and preserves the prior release", async (t) => {
@@ -195,8 +215,21 @@ test("promotes a healthy release and preserves the prior release", async (t) => 
   );
 
   const commands = await fixture.dockerCommands();
-  assert.ok(commands.some((command) => command.includes("pull --quiet")));
-  assert.ok(commands.some((command) => command.includes("up --pull never")));
+  const pullIndex = commands.findIndex((command) =>
+    command.includes("pull --quiet"),
+  );
+  const schemaIndex = commands.findIndex((command) =>
+    command.startsWith("run --rm --name relay-schema-sync "),
+  );
+  const upIndex = commands.findIndex((command) =>
+    command.includes("up --pull never"),
+  );
+  assert.ok(pullIndex >= 0);
+  assert.ok(schemaIndex > pullIndex);
+  assert.ok(upIndex > schemaIndex);
+  assert.ok(commands[schemaIndex]?.includes("db push --config"));
+  assert.ok(!commands[schemaIndex]?.includes("--accept-data-loss"));
+  assert.ok(!commands[schemaIndex]?.includes("--force-reset"));
   assert.ok(
     commands.some(
       (command) =>
@@ -214,6 +247,7 @@ test("retries transient image pull failures", async (t) => {
   await fixture.run();
 
   assert.equal(await readFile(fixture.pullCount, "utf8"), "3\n");
+  assert.equal(await readFile(fixture.schemaCount, "utf8"), "1\n");
   assert.equal(await readFile(fixture.upCount, "utf8"), "1\n");
 });
 
@@ -232,7 +266,29 @@ test("leaves the running release untouched after permanent pull failure", async 
     false,
   );
   assert.equal(await exists(fixture.upCount), false);
+  assert.equal(await exists(fixture.schemaCount), false);
   assert.equal(await readFile(fixture.pullCount, "utf8"), "3\n");
+});
+
+test("leaves the running release untouched when schema sync fails", async (t) => {
+  const previousImage = "ghcr.io/example/relay-runtime:previous-sha";
+  const fixture = await createFixture(t, {
+    previousImage,
+    schemaFailures: 1,
+  });
+
+  await assert.rejects(fixture.run(), (error) => error.code === 1);
+
+  assert.equal(await readFile(fixture.schemaCount, "utf8"), "1\n");
+  assert.equal(await exists(fixture.upCount), false);
+  assert.equal(
+    await readFile(join(fixture.deployPath, ".release.env"), "utf8"),
+    `RELAY_IMAGE=${previousImage}\nRELAY_ENV_FILE=.env\n`,
+  );
+  assert.equal(
+    await exists(join(fixture.deployPath, ".release.env.next")),
+    false,
+  );
 });
 
 test("fails before pulling when Docker storage is below the safety floor", async (t) => {
@@ -241,6 +297,7 @@ test("fails before pulling when Docker storage is below the safety floor", async
   await assert.rejects(fixture.run(), (error) => error.code === 1);
 
   assert.equal(await exists(fixture.pullCount), false);
+  assert.equal(await exists(fixture.schemaCount), false);
   assert.equal(
     await exists(join(fixture.deployPath, ".release.env.next")),
     false,
@@ -254,6 +311,7 @@ test("restores the previous release after health checks fail", async (t) => {
   await assert.rejects(fixture.run(), (error) => error.code === 1);
 
   assert.equal(await readFile(fixture.upCount, "utf8"), "2\n");
+  assert.equal(await readFile(fixture.schemaCount, "utf8"), "1\n");
   assert.equal(
     await readFile(join(fixture.deployPath, ".release.env"), "utf8"),
     `RELAY_IMAGE=${previousImage}\nRELAY_ENV_FILE=.env\n`,

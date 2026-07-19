@@ -42,6 +42,7 @@ COPY packages/eslint-config/package.json ./packages/eslint-config/package.json
 COPY packages/integrations/package.json ./packages/integrations/package.json
 COPY packages/queue/package.json ./packages/queue/package.json
 COPY packages/runtime-config/package.json ./packages/runtime-config/package.json
+COPY packages/schema-admin/package.json ./packages/schema-admin/package.json
 COPY packages/typescript-config/package.json ./packages/typescript-config/package.json
 COPY packages/ui/package.json ./packages/ui/package.json
 COPY packages/verticals/package.json ./packages/verticals/package.json
@@ -51,7 +52,8 @@ RUN --mount=type=cache,id=relay-pnpm-store,target=/pnpm/store \
   && pnpm install --frozen-lockfile \
     --filter . \
     --filter @relay/api... \
-    --filter @relay/worker...
+    --filter @relay/worker... \
+    --filter @relay/schema-admin...
 
 FROM dependencies AS build
 
@@ -70,7 +72,13 @@ RUN pnpm exec turbo run build \
 RUN --mount=type=cache,id=relay-pnpm-store,target=/pnpm/store \
   pnpm config set store-dir /pnpm/store \
   && pnpm --filter @relay/api deploy --prod --legacy /opt/relay/api \
-  && pnpm --filter @relay/worker deploy --prod --legacy /opt/relay/worker
+  && pnpm --filter @relay/worker deploy --prod --legacy /opt/relay/worker \
+  && pnpm --config.strict-peer-dependencies=false \
+    --filter @relay/schema-admin deploy --prod --legacy /opt/relay/schema-admin \
+  && cp packages/database/prisma.config.ts /opt/relay/schema-admin/prisma.config.ts \
+  && cp -R packages/database/prisma /opt/relay/schema-admin/prisma \
+  && cd /opt/relay/schema-admin \
+  && ./node_modules/.bin/prisma validate --config prisma.config.ts
 
 FROM base AS runtime
 
@@ -87,6 +95,7 @@ WORKDIR /opt/relay
 
 COPY --from=build --chown=relay:relay /opt/relay/api ./api
 COPY --from=build --chown=relay:relay /opt/relay/worker ./worker
+COPY --from=build --chown=relay:relay /opt/relay/schema-admin ./schema-admin
 COPY --chown=relay:relay infra/production/worker-healthcheck.mjs ./healthchecks/worker.mjs
 
 USER 10001:10001
