@@ -17,6 +17,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "lint": "eslint . --max-warnings 0",
+    "test": "tsc -p tsconfig.build.json && node --test dist/providers.test.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

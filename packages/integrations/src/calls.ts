@@ -29,8 +29,20 @@ export interface StartedCall {
 export interface CallStatusSnapshot {
   readonly outcome?: CallOutcome;
   readonly providerCallId: string;
+  /** Authenticated provider URL; callers must never expose provider credentials. */
+  readonly recordingUrl?: string;
   readonly status: CallStatus;
+  readonly transcriptText?: string;
   readonly updatedAt: string;
+}
+
+export type CallRecordingContentType = "audio/mpeg" | "audio/wav";
+
+export interface CallRecording {
+  readonly body: Uint8Array;
+  readonly contentLength: number;
+  readonly contentType: CallRecordingContentType;
+  readonly providerCallId: string;
 }
 
 export interface VerifiedCallEvent {
@@ -38,7 +50,10 @@ export interface VerifiedCallEvent {
   readonly occurredAt: string;
   readonly outcome?: CallOutcome;
   readonly providerCallId: string;
+  /** Authenticated provider URL; callers must never expose provider credentials. */
+  readonly recordingUrl?: string;
   readonly status: CallStatus;
+  readonly transcriptText?: string;
 }
 
 export interface CallProvider {
@@ -53,6 +68,11 @@ export interface CallProvider {
     providerCallId: string,
     context: ProviderRequestContext,
   ): Promise<ProviderResult<CallStatusSnapshot>>;
+
+  getRecording(
+    providerCallId: string,
+    context: ProviderRequestContext,
+  ): Promise<ProviderResult<CallRecording>>;
 
   startCall(
     request: StartCallRequest,
