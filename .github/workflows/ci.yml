@@ -40,6 +40,9 @@ jobs:
       - name: Test production deployment script
         run: node --test infra/production/deploy.test.mjs
 
+      - name: Test Vercel output contract
+        run: node --test scripts/vercel-output.test.mjs
+
       - name: Check formatting
         run: pnpm format:check
 
