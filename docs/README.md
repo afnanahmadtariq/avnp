@@ -42,6 +42,7 @@ This directory separates current decisions from the unchanged planning files tha
 
 - [Getting started](development/getting-started.md)
 - [Environment variables](development/environment.md)
+- [Service and API setup](development/service-setup.md)
 - [Engineering conventions](development/conventions.md)
 - [Testing strategy](development/testing.md)
 - [Deployment shape](operations/deployment.md)

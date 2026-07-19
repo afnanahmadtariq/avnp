@@ -23,6 +23,8 @@ pnpm db:generate
 
 The scaffold's build and tests do not require live provider values. Empty provider variables are expected until their adapters are enabled.
 
+Before creating any paid provider account, read [Service and API setup](service-setup.md). The provider names in `.env.example` are reserved placeholders and are not consumed by the current deterministic application.
+
 ## Run applications
 
 ```bash
