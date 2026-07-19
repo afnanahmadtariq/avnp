@@ -30,6 +30,7 @@ const callsPaused = ref(false);
 const apiError = ref("");
 const apiPending = ref(true);
 const controlPending = ref(false);
+const cancelArmed = ref(false);
 const decisionPending = ref(false);
 const evidencePendingId = ref("");
 const job = ref<JobDetail>();
@@ -39,6 +40,11 @@ const { decisionSaved, markDecisionSaved, selectedQuoteId, selectQuote } =
   useDecisionSelection();
 let pollTimer: number | undefined;
 let pollPending = false;
+let workspaceLoadToken = 0;
+
+interface WorkspaceNegotiation extends Negotiation {
+  hasOffer: boolean;
+}
 
 function initials(name: string): string {
   return name
@@ -58,10 +64,20 @@ function callTone(call: RunCall): NegotiationTone {
 }
 
 function callStatus(call: RunCall): string {
+  const outcomeLabels: Record<string, string> = {
+    busy: "Line was busy",
+    callback_requested: "Callback requested",
+    declined: "Business declined",
+    failed: "Call ended without a quote",
+    no_answer: "No answer",
+    quote_received: "Quote received",
+    unavailable: "Business unavailable",
+  };
+  if (call.outcome) return outcomeLabels[call.outcome] ?? call.outcome;
+
   const labels: Record<string, string> = {
     cancelled: "Call cancelled",
-    completed:
-      call.outcome === "quote_received" ? "Quote received" : "Complete",
+    completed: "Completed without a quote",
     dialing: "Dialing",
     failed: "Call failed",
     in_progress: "Gathering details",
@@ -78,53 +94,67 @@ function transcriptEntries(call: RunCall): Negotiation["transcript"] {
     .map((line) => line.trim())
     .filter(Boolean);
 
-  return (
-    lines.length > 0 ? lines : ["Sara: Waiting for transcript updates."]
-  ).map((line, index) => {
+  return lines.map((line, index) => {
     const businessLine = /^business:/i.test(line);
 
     return {
-      at: `00:${String(index + 1).padStart(2, "0")}`,
+      at: String(index + 1),
       speaker: businessLine ? ("Business" as const) : ("Sara" as const),
       text: line.replace(/^(relay|sara|business):\s*/i, ""),
     };
   });
 }
 
-function mapCall(call: RunCall): Negotiation {
+function mapCall(call: RunCall): WorkspaceNegotiation {
   const evidence =
     call.evidenceItems?.map((item) => ({
       accessible: item.available,
       detail: "Saved with this negotiation for review.",
       id: item.id,
       label: item.label,
-      source: "Verified call record",
+      source:
+        run.value?.mode === "live"
+          ? "Verified call record"
+          : run.value?.mode === "fixture"
+            ? "Demonstration call record"
+            : "Saved call record",
     })) ??
     call.evidence.map((item, index) => ({
       accessible: false,
       detail: "Saved with this negotiation for review.",
       id: `${call.id}-evidence-${index}`,
       label: item,
-      source: "Verified call record",
+      source:
+        run.value?.mode === "live"
+          ? "Verified call record"
+          : run.value?.mode === "fixture"
+            ? "Demonstration call record"
+            : "Saved call record",
     }));
+
+  const hasOffer =
+    typeof call.currentOfferCents === "number" ||
+    typeof call.initialOfferCents === "number";
 
   return {
     id: call.id,
     company: call.businessName,
+    hasOffer,
     initials: initials(call.businessName),
     status: callStatus(call),
     tone: callTone(call),
     initialOffer: (call.initialOfferCents ?? call.currentOfferCents ?? 0) / 100,
     currentOffer: (call.currentOfferCents ?? call.initialOfferCents ?? 0) / 100,
     progress: call.progress,
-    lastUpdate: call.status === "completed" ? "Complete" : "Just now",
+    lastUpdate: hasOffer ? "Offer recorded" : callStatus(call),
     strategy:
       call.status === "negotiating"
         ? "Comparable price and terms"
         : "Verified itemization",
-    summary:
-      call.outcome === "quote_received"
-        ? "Relay confirmed the price and requested the same itemized scope used for every business."
+    summary: hasOffer
+      ? "Relay saved the quoted price against the same confirmed scope used for every business."
+      : call.outcome
+        ? `No quote was recorded. The saved outcome is: ${callStatus(call).toLowerCase()}.`
         : "Relay is keeping the confirmed scope fixed while it gathers a structured outcome.",
     transcript: transcriptEntries(call),
     evidence,
@@ -139,17 +169,14 @@ function mapQuote(quote: RunQuote, recommendedQuoteId?: string): Quote {
     initialTotal: (quote.originalTotalCents ?? quote.totalCents) / 100,
     rating: quote.rating ?? 0,
     reviewCount: quote.reviewCount ?? 0,
-    arrival: quote.arrivalWindow ?? "Confirmed with business",
+    arrival: quote.arrivalWindow ?? "Not supplied",
     deposit:
       quote.depositCents === undefined
         ? "Not confirmed"
         : `${Math.round((quote.depositCents / quote.totalCents) * 100)}%`,
-    duration: quote.estimatedDuration ?? "Confirmed scope",
-    included:
-      quote.inclusions.length > 0
-        ? quote.inclusions
-        : ["Confirmed moving scope"],
-    fees: [{ label: "All-in quoted total", amount: quote.totalCents / 100 }],
+    duration: quote.estimatedDuration ?? "Not supplied",
+    included: quote.inclusions,
+    fees: [],
     evidenceCount: quote.evidenceCount,
     score: quote.score ?? Math.round(quote.confidence * 100),
     ...(quote.id === recommendedQuoteId ? { recommended: true } : {}),
@@ -162,7 +189,7 @@ const moveBrief = computed(() => {
   if (!detail) {
     return {
       access: "",
-      budget: 0,
+      budget: undefined as number | undefined,
       date: "",
       destination: "",
       home: "",
@@ -187,7 +214,9 @@ const moveBrief = computed(() => {
       new Date(`${specification.movingDate}T12:00:00`),
     ),
     window: "Confirmed with each business",
-    budget: (specification.budget?.amountMinor ?? 0) / 100,
+    budget: specification.budget
+      ? specification.budget.amountMinor / 100
+      : undefined,
     home: `${specification.bedrooms}-bedroom move`,
     access: specification.hasElevator
       ? "Elevator access confirmed"
@@ -199,7 +228,7 @@ const moveBrief = computed(() => {
   };
 });
 
-const negotiations = computed<Negotiation[]>(() =>
+const negotiations = computed<WorkspaceNegotiation[]>(() =>
   run.value?.calls.length ? run.value.calls.map(mapCall) : [],
 );
 
@@ -233,30 +262,51 @@ const recommendation = computed(() => {
     };
   }
 
+  const sourceQuote = run.value.quotes.find(
+    (candidate) => candidate.id === quote.id,
+  );
+  const includedCount = sourceQuote?.inclusions.length ?? 0;
+  const riskCount = sourceQuote?.riskFlags.length ?? 0;
+
   return {
     quoteId: quote.id,
     savings: Math.max(0, quote.initialTotal - quote.total),
     confidence: quote.score,
-    headline: `${quote.company} is the strongest verified value`,
+    headline:
+      run.value.mode === "live"
+        ? `${quote.company} is the strongest verified value`
+        : run.value.mode === "fixture"
+          ? `${quote.company} leads this sample comparison`
+          : `${quote.company} leads this comparison`,
     rationale: [
-      "The confirmed scope is consistent across businesses",
-      evidenceSupportCopy(quote.evidenceCount, "this offer"),
-      "Unknown fees remain visible rather than becoming zero",
-      "The recommendation uses price, completeness, confidence, and risk",
+      `Highest reported score at ${quote.score}/100`,
+      evidenceSupportCopy(quote.evidenceCount, "this offer", {
+        verified: run.value.mode === "live",
+      }),
+      includedCount > 0
+        ? `${includedCount} included scope ${includedCount === 1 ? "item was" : "items were"} supplied`
+        : "Scope/itemization was not supplied",
+      riskCount > 0
+        ? `${riskCount} reported risk ${riskCount === 1 ? "flag needs" : "flags need"} review`
+        : "No risk flags were returned for this offer",
     ],
   };
 });
 
 const sessionActivity = computed(() =>
   runEvents.value.length
-    ? runEvents.value.slice(0, 5).map((event) => ({
-        at: new Intl.DateTimeFormat("en-US", {
-          hour: "numeric",
-          minute: "2-digit",
-        }).format(new Date(event.at)),
-        label: event.message,
-        company: event.callId ? "Call update" : "Relay",
-      }))
+    ? runEvents.value
+        .slice(-5)
+        .reverse()
+        .map((event) => ({
+          id: event.id,
+          at: new Intl.DateTimeFormat("en-US", {
+            hour: "numeric",
+            minute: "2-digit",
+          }).format(new Date(event.at)),
+          label: event.message,
+          company: event.callId ? "Call update" : "Relay",
+        }))
     : [],
 );
 
@@ -278,6 +328,16 @@ const selectedQuote = computed(
     quotes.value.find((quote) => quote.id === selectedQuoteId.value) ??
     recommendedQuote.value,
 );
+const selectedQuoteComparison = computed(() => {
+  if (!selectedQuote.value || !recommendedQuote.value) return "";
+
+  const difference = selectedQuote.value.total - recommendedQuote.value.total;
+  if (difference === 0) return "The same total as Relay's recommendation";
+
+  return `${formatCurrency(Math.abs(difference))} ${
+    difference > 0 ? "more" : "less"
+  } than Relay's recommendation`;
+});
 
 const completedCalls = computed(
   () =>
@@ -290,6 +350,13 @@ const verifiedEvidenceCount = computed(() =>
     0,
   ),
 );
+const evidenceHeadingLabel = computed(() =>
+  run.value?.mode === "fixture" ? "Evidence records" : "Verified evidence",
+);
+
+function workspaceEvidenceLabel(count: number): string {
+  return evidencePointLabel(count, { verified: run.value?.mode === "live" });
+}
 const runComplete = computed(() =>
   ["cancelled", "completed", "failed", "partially_completed"].includes(
     run.value?.status ?? "",
@@ -302,6 +369,20 @@ const terminalStatusLabel = computed(() => {
   if (run.value?.status === "cancelled") return "Run cancelled";
   if (run.value?.status === "failed") return "Run needs attention";
   return "Report ready";
+});
+const lastUpdatedLabel = computed(() => {
+  if (!run.value?.updatedAt) return "Update time unavailable";
+
+  return `Updated ${new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(run.value.updatedAt))}`;
+});
+const runModeLabel = computed(() => {
+  const mode = run.value?.mode;
+  if (mode === "fixture") return "Demonstration run";
+  if (mode === "live") return "Live calling run";
+  return "Negotiation run";
 });
 
 function clearWorkspacePoll(): void {
@@ -366,7 +447,9 @@ watch(runComplete, (complete) => {
 });
 
 async function loadWorkspace(silent = false): Promise<void> {
+  const loadToken = ++workspaceLoadToken;
   if (!silent) {
+    clearWorkspacePoll();
     apiPending.value = true;
     job.value = undefined;
     run.value = undefined;
@@ -379,9 +462,9 @@ async function loadWorkspace(silent = false): Promise<void> {
     const loadedJob = await api.getJob(publicId.value);
     const resolvedRunId = runId.value ?? loadedJob.latestRunId;
 
-    job.value = loadedJob;
-
     if (!resolvedRunId) {
+      if (loadToken !== workspaceLoadToken) return;
+      job.value = loadedJob;
       apiError.value = "This request does not have a negotiation run yet.";
       return;
     }
@@ -397,6 +480,9 @@ async function loadWorkspace(silent = false): Promise<void> {
       );
     }
 
+    if (loadToken !== workspaceLoadToken) return;
+
+    job.value = loadedJob;
     run.value = loadedRun;
     runEvents.value = loadedEvents.items;
     callsPaused.value = loadedRun.paused;
@@ -405,24 +491,31 @@ async function loadWorkspace(silent = false): Promise<void> {
     }
     setCurrent(loadedJob.publicId, loadedRun.id);
   } catch (error: unknown) {
-    if (!silent) {
-      apiError.value =
-        error instanceof Error
-          ? error.message
+    if (loadToken !== workspaceLoadToken) return;
+    apiError.value =
+      error instanceof Error
+        ? error.message
+        : silent
+          ? "Live updates were interrupted. Retry to refresh the saved run."
           : "Relay could not load the negotiation run.";
-    }
   } finally {
-    apiPending.value = false;
+    if (loadToken === workspaceLoadToken) apiPending.value = false;
   }
 }
 
-async function toggleCalls(): Promise<void> {
-  const nextPaused = !callsPaused.value;
-  callsPaused.value = nextPaused;
+async function retryWorkspace(): Promise<void> {
+  await loadWorkspace();
+  scheduleWorkspacePoll();
+}
 
+async function toggleCalls(): Promise<void> {
   if (!run.value || controlPending.value) return;
 
+  const previousPaused = callsPaused.value;
+  const nextPaused = !previousPaused;
+  callsPaused.value = nextPaused;
   controlPending.value = true;
+  workspaceLoadToken += 1;
   apiError.value = "";
 
   try {
@@ -433,6 +526,7 @@ async function toggleCalls(): Promise<void> {
     run.value = updated;
     callsPaused.value = updated.paused;
   } catch (error: unknown) {
+    callsPaused.value = previousPaused;
     apiError.value =
       error instanceof Error
         ? error.message
@@ -442,14 +536,36 @@ async function toggleCalls(): Promise<void> {
   }
 }
 
-async function saveRecommendedDecision(): Promise<void> {
-  if (!run.value || !recommendedQuote.value || decisionPending.value) return;
+async function cancelRun(): Promise<void> {
+  if (!run.value || controlPending.value || runComplete.value) return;
+
+  controlPending.value = true;
+  workspaceLoadToken += 1;
+  apiError.value = "";
+  try {
+    const updated = await useRelayApi().updateRun(run.value.id, "cancel");
+    run.value = updated;
+    callsPaused.value = updated.paused;
+    cancelArmed.value = false;
+    clearWorkspacePoll();
+  } catch (error: unknown) {
+    apiError.value =
+      error instanceof Error
+        ? error.message
+        : "Relay could not cancel the run.";
+  } finally {
+    controlPending.value = false;
+  }
+}
+
+async function saveSelectedDecision(): Promise<void> {
+  if (!run.value || !selectedQuote.value || decisionPending.value) return;
 
   decisionPending.value = true;
   apiError.value = "";
   try {
-    await useRelayApi().saveDecision(run.value.id, recommendedQuote.value.id);
-    markDecisionSaved(recommendedQuote.value.id);
+    await useRelayApi().saveDecision(run.value.id, selectedQuote.value.id);
+    markDecisionSaved(selectedQuote.value.id);
   } catch (error: unknown) {
     apiError.value =
       error instanceof Error
@@ -513,7 +629,7 @@ function badgeTone(
       <ApiFeedback
         :message="apiError"
         :pending="apiPending"
-        @retry="loadWorkspace"
+        @retry="retryWorkspace"
       />
 
       <section v-if="job && run" class="session-heading">
@@ -553,7 +669,30 @@ function badgeTone(
                   : "Pause calls"
             }}
           </button>
-          <NuxtLink v-else class="button button--secondary" to="/dashboard">
+          <button
+            v-if="!runComplete"
+            class="button button--secondary session-cancel"
+            :class="{ 'session-cancel--armed': cancelArmed }"
+            :disabled="controlPending"
+            type="button"
+            @click="cancelArmed ? cancelRun() : (cancelArmed = true)"
+          >
+            {{ cancelArmed ? "Confirm cancel" : "Cancel run" }}
+          </button>
+          <button
+            v-if="cancelArmed && !runComplete"
+            class="session-keep-button"
+            :disabled="controlPending"
+            type="button"
+            @click="cancelArmed = false"
+          >
+            Keep running
+          </button>
+          <NuxtLink
+            v-if="runComplete && !reportReady"
+            class="button button--secondary"
+            to="/dashboard"
+          >
             Return to requests <span aria-hidden="true">→</span>
           </NuxtLink>
         </div>
@@ -566,6 +705,9 @@ function badgeTone(
       >
         <div class="stage-card__topline">
           <div>
+            <StatusBadge :dot="false" tone="neutral">
+              {{ runModeLabel }}
+            </StatusBadge>
             <StatusBadge
               :tone="
                 reportReady
@@ -668,13 +810,14 @@ function badgeTone(
       >
         <article class="metric-card card">
           <span>Best current offer</span>
-          <strong class="mono-number">{{
-            formatCurrency(recommendedQuote?.total ?? 0)
-          }}</strong>
-          <small class="metric-card__positive"
-            >{{ formatCurrency(recommendation.savings) }} below opening
-            price</small
-          >
+          <strong v-if="recommendedQuote" class="mono-number">
+            {{ formatCurrency(recommendedQuote.total) }}
+          </strong>
+          <strong v-else class="metric-card__pending">No quote yet</strong>
+          <small v-if="recommendedQuote" class="metric-card__positive">
+            {{ formatCurrency(recommendation.savings) }} below opening price
+          </small>
+          <small v-else>Completed outcomes never become a $0 offer</small>
         </article>
         <article class="metric-card card">
           <span>Calls completed</span>
@@ -694,9 +837,9 @@ function badgeTone(
           </small>
         </article>
         <article class="metric-card card">
-          <span>Verified evidence</span>
+          <span>{{ evidenceHeadingLabel }}</span>
           <strong class="mono-number">{{ verifiedEvidenceCount }}</strong>
-          <small>Across transcripts and quotes</small>
+          <small>Across saved call records</small>
         </article>
       </section>
 
@@ -741,7 +884,13 @@ function badgeTone(
               </div>
               <div>
                 <dt>Target budget</dt>
-                <dd>{{ formatCurrency(moveBrief.budget) }}</dd>
+                <dd>
+                  {{
+                    moveBrief.budget === undefined
+                      ? "No fixed budget"
+                      : formatCurrency(moveBrief.budget)
+                  }}
+                </dd>
               </div>
               <div>
                 <dt>Inventory</dt>
@@ -764,7 +913,7 @@ function badgeTone(
                 <span class="panel__eyebrow">Parallel outreach</span>
                 <h2>Negotiations</h2>
               </div>
-              <span class="panel__meta">Last updated just now</span>
+              <span class="panel__meta">{{ lastUpdatedLabel }}</span>
             </header>
 
             <div class="calls-layout">
@@ -795,14 +944,16 @@ function badgeTone(
                   <span class="call-row__offer">
                     <s
                       v-if="
+                        negotiation.hasOffer &&
                         negotiation.initialOffer !== negotiation.currentOffer
                       "
                     >
                       {{ formatCurrency(negotiation.initialOffer) }}
                     </s>
-                    <strong class="mono-number">
+                    <strong v-if="negotiation.hasOffer" class="mono-number">
                       {{ formatCurrency(negotiation.currentOffer) }}
                     </strong>
+                    <strong v-else class="call-row__outcome"> No quote </strong>
                     <small>{{ negotiation.lastUpdate }}</small>
                   </span>
                 </button>
@@ -866,18 +1017,24 @@ function badgeTone(
                       v-for="entry in activeNegotiation.transcript"
                       :key="`${entry.at}-${entry.speaker}`"
                     >
-                      <time>{{ entry.at }}</time>
+                      <span class="transcript__line">Line {{ entry.at }}</span>
                       <div>
                         <strong>{{ entry.speaker }}</strong>
                         <p>{{ entry.text }}</p>
                       </div>
                     </li>
                   </ol>
+                  <p
+                    v-if="activeNegotiation.transcript.length === 0"
+                    class="transcript__empty"
+                  >
+                    No transcript text has been saved for this call.
+                  </p>
                 </div>
 
                 <details class="evidence-drawer" open>
                   <summary>
-                    Verified evidence
+                    {{ evidenceHeadingLabel }}
                     <span>
                       {{ activeNegotiation.evidence.length }}
                       {{
@@ -956,8 +1113,8 @@ function badgeTone(
             </div>
             <h2>{{ recommendation.headline }}</h2>
             <p>
-              Best balance of verified price, arrival certainty, deposit terms,
-              and customer history.
+              Highest-ranked current offer using the score, terms, evidence,
+              included scope, and risk flags returned for this run.
             </p>
 
             <div class="recommendation-card__price">
@@ -1004,12 +1161,7 @@ function badgeTone(
               <span>Reviewing alternative</span>
               <strong>{{ selectedQuote.company }}</strong>
               <p>
-                {{
-                  formatCurrency(
-                    selectedQuote.total - (recommendedQuote?.total ?? 0),
-                  )
-                }}
-                more than Relay's recommendation, with a
+                {{ selectedQuoteComparison }}, with a
                 {{ selectedQuote.deposit }} deposit.
               </p>
             </div>
@@ -1018,7 +1170,7 @@ function badgeTone(
               class="button button--blue recommendation-card__action"
               :disabled="decisionPending || !reportReady"
               type="button"
-              @click="saveRecommendedDecision"
+              @click="saveSelectedDecision"
             >
               {{
                 !reportReady
@@ -1027,7 +1179,7 @@ function badgeTone(
                     ? "Saving decision…"
                     : decisionSaved
                       ? "Decision saved"
-                      : `Choose ${recommendedQuote?.company ?? "recommended offer"}`
+                      : `Choose ${selectedQuote?.company ?? "selected offer"}`
               }}
               <span aria-hidden="true">{{
                 decisionPending ? "" : decisionSaved ? "✓" : "→"
@@ -1078,24 +1230,20 @@ function badgeTone(
               <div>
                 <dt>Evidence</dt>
                 <dd>
-                  {{
-                    evidencePointLabel(selectedQuote.evidenceCount, {
-                      verified: true,
-                    })
-                  }}
+                  {{ workspaceEvidenceLabel(selectedQuote.evidenceCount) }}
                 </dd>
               </div>
             </dl>
             <details v-if="selectedQuote" class="fee-breakdown">
-              <summary>Itemized total</summary>
-              <div
-                v-for="fee in selectedQuote.fees"
-                :key="fee.label"
-                class="fee-row"
-              >
-                <span>{{ fee.label }}</span>
-                <strong>{{ formatCurrency(fee.amount) }}</strong>
-              </div>
+              <summary>Included scope</summary>
+              <ul>
+                <li v-for="item in selectedQuote.included" :key="item">
+                  {{ item }}
+                </li>
+              </ul>
+              <p v-if="selectedQuote.included.length === 0">
+                Scope/itemization not supplied.
+              </p>
             </details>
           </section>
 
@@ -1105,7 +1253,7 @@ function badgeTone(
               <span>Local time</span>
             </header>
             <ol>
-              <li v-for="activity in sessionActivity" :key="activity.at">
+              <li v-for="activity in sessionActivity" :key="activity.id">
                 <time>{{ activity.at }}</time>
                 <div>
                   <strong>{{ activity.label }}</strong>
@@ -1113,6 +1261,9 @@ function badgeTone(
                 </div>
               </li>
             </ol>
+            <p v-if="sessionActivity.length === 0" class="activity-card__empty">
+              No run events have been recorded yet.
+            </p>
           </section>
         </aside>
       </div>
@@ -1162,6 +1313,20 @@ function badgeTone(
 
 .session-heading__actions .button {
   min-height: 39px;
+}
+
+.session-cancel--armed {
+  border-color: #d98484;
+  color: #a63838;
+}
+
+.session-keep-button {
+  background: transparent;
+  border: 0;
+  color: var(--relay-muted);
+  font-size: var(--relay-text-control);
+  min-height: 39px;
+  padding: 0 var(--relay-space-2);
 }
 
 .pause-icon {
@@ -1565,6 +1730,12 @@ function badgeTone(
   font-weight: 600;
 }
 
+.call-row__offer .call-row__outcome {
+  color: var(--relay-muted);
+  font-size: var(--relay-text-meta);
+  font-weight: 570;
+}
+
 .call-detail {
   min-width: 0;
   padding: 20px;
@@ -1677,6 +1848,19 @@ function badgeTone(
   max-height: 260px;
   overflow-y: auto;
   padding: 0 4px 0 0;
+}
+
+.transcript__line {
+  color: var(--relay-faint);
+  font-size: var(--relay-text-meta);
+}
+
+.transcript__empty,
+.activity-card__empty {
+  color: var(--relay-faint);
+  font-size: var(--relay-text-meta);
+  margin: 0;
+  padding: var(--relay-space-4);
 }
 
 .transcript li {

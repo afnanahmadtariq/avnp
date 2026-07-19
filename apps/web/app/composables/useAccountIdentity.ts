@@ -54,11 +54,17 @@ export function useAccountIdentity() {
     isLoaded.value = true;
   }
 
+  function resetAccountIdentity(): void {
+    identity.value = { ...fallbackIdentity };
+    isLoaded.value = false;
+  }
+
   return {
     displayName,
     firstName,
     initials,
     isLoaded,
+    resetAccountIdentity,
     representedAs,
     syncAccountIdentity,
   };

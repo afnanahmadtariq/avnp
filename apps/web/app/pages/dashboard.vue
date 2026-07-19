@@ -31,6 +31,8 @@ const actionRequired = computed(
         "discover_businesses",
         "review_and_confirm",
         "review_report",
+        "resume_or_cancel",
+        "start_over",
       ].includes(job.nextAction),
     ).length,
 );
@@ -75,6 +77,8 @@ function nextActionCopy(job: JobSummary): string {
     review_report: "Your comparison is ready for a final decision.",
     resume_or_cancel:
       "Calls are paused. Open the workspace to choose what happens next.",
+    start_over:
+      "The previous run ended. Review the businesses before starting again.",
   };
 
   return copy[job.nextAction] ?? "Open this request to continue.";
@@ -84,7 +88,11 @@ function jobRoute(job: JobSummary): string {
   const base = `/requests/${encodeURIComponent(job.publicId)}`;
 
   if (job.nextAction === "review_and_confirm") return `${base}/review`;
-  if (["approve_and_start", "discover_businesses"].includes(job.nextAction)) {
+  if (
+    ["approve_and_start", "discover_businesses", "start_over"].includes(
+      job.nextAction,
+    )
+  ) {
     return `${base}/businesses`;
   }
   if (job.nextAction === "review_report") return `${base}/report`;

@@ -40,5 +40,12 @@ describe("useAccountIdentity", () => {
     expect(account.initials.value).toBe("AL");
     expect(account.representedAs.value).toBe("Ada L.");
     expect(account.isLoaded.value).toBe(true);
+
+    account.resetAccountIdentity();
+
+    expect(account.displayName.value).toBe("Relay member");
+    expect(account.representedAs.value).toBe("the account holder");
+    expect(account.initials.value).toBe("RM");
+    expect(account.isLoaded.value).toBe(false);
   });
 });

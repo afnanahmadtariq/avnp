@@ -24,7 +24,7 @@ const candidate = {
   reviewCount: 214,
   selected: true,
   source: "google-places",
-  status: "eligible",
+  status: "discovered",
 };
 let timerCallbacks: Array<{ delay?: number; handler: () => void }> = [];
 
@@ -91,6 +91,83 @@ describe("business discovery polling", () => {
 
     expect(timerCallbacks).toHaveLength(timerCount);
     expect(api.getCandidates).toHaveBeenCalledTimes(2);
+    wrapper.unmount();
+  });
+
+  it("keeps polling when partial candidates arrive before discovery is ready", async () => {
+    api.getCandidates.mockReset();
+    api.getCandidates
+      .mockResolvedValueOnce({ items: [], mode: "live", status: "ready" })
+      .mockResolvedValueOnce({
+        items: [candidate],
+        mode: "live",
+        status: "discovering",
+      })
+      .mockResolvedValueOnce({
+        items: [
+          candidate,
+          { ...candidate, id: "business-2", name: "Two Movers" },
+        ],
+        mode: "live",
+        status: "ready",
+      });
+
+    const wrapper = mount(BusinessesPage, {
+      global: {
+        stubs: {
+          AppShell: { template: "<div><slot /></div>" },
+          NuxtLink: { template: "<a><slot /></a>" },
+          StatusBadge: { template: "<span><slot /></span>" },
+        },
+      },
+    });
+    await flushPromises();
+
+    const firstPoll = timerCallbacks.find((timer) => timer.delay === 2_500);
+    expect(firstPoll).toBeDefined();
+    const initialTimerCount = timerCallbacks.length;
+    firstPoll?.handler();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("Pine & Co. Moving");
+    expect(timerCallbacks.length).toBeGreaterThan(initialTimerCount);
+    expect(wrapper.text()).toContain("Still searching for callable businesses");
+    expect(wrapper.text()).toContain("Review brief");
+
+    timerCallbacks.at(-1)?.handler();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("More callable businesses are needed");
+    expect(wrapper.text()).toContain("Discover again");
+    expect(wrapper.text()).toContain("1 more callable business required");
+    wrapper.unmount();
+  });
+
+  it("labels fixture provenance and disables candidates without a callable phone", async () => {
+    api.getCandidates.mockReset();
+    api.getCandidates.mockResolvedValueOnce({
+      items: [{ ...candidate, phone: null, selected: true }],
+      mode: "fixture",
+      status: "ready",
+    });
+
+    const wrapper = mount(BusinessesPage, {
+      global: {
+        stubs: {
+          AppShell: { template: "<div><slot /></div>" },
+          NuxtLink: { template: "<a><slot /></a>" },
+          StatusBadge: { template: "<span><slot /></span>" },
+        },
+      },
+    });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("Demonstration listings");
+    expect(wrapper.text()).toContain("not live provider results");
+    expect(wrapper.text()).toContain("0 selected");
+    expect(
+      wrapper.get<HTMLInputElement>(".business-check input").element.disabled,
+    ).toBe(true);
     wrapper.unmount();
   });
 });

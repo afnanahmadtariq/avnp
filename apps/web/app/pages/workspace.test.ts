@@ -113,6 +113,7 @@ const run = {
     timeAvoidedMinutes: 45,
     verifiedSavingsCents: 37_000,
   },
+  mode: "live" as const,
   paused: false,
   quotes: [
     {
@@ -294,6 +295,61 @@ describe("workspace page", () => {
     expect(wrapper.text()).toContain("Save failed");
   });
 
+  it("shows saved non-quote outcomes without inventing a zero-dollar offer or transcript", async () => {
+    const wrapper = mount(WorkspacePage, {
+      global: { stubs: globalComponents },
+    });
+    await flushPromises();
+
+    const queuedCall = wrapper.findAll(".call-row")[2];
+    expect(queuedCall?.find(".call-row__offer").text()).toContain("No quote");
+    expect(queuedCall?.find(".call-row__offer").text()).not.toContain("$0");
+
+    await queuedCall?.trigger("click");
+    expect(wrapper.get(".transcript__empty").text()).toContain(
+      "No transcript text has been saved",
+    );
+    expect(wrapper.find(".transcript li").exists()).toBe(false);
+  });
+
+  it("rolls the pause control back when the server rejects the change", async () => {
+    api.updateRun.mockRejectedValueOnce(new Error("Pause failed"));
+    const wrapper = mount(WorkspacePage, {
+      global: { stubs: globalComponents },
+    });
+    await flushPromises();
+
+    const pauseButton = wrapper.get(".session-heading__actions button");
+    await pauseButton.trigger("click");
+    await flushPromises();
+
+    expect(pauseButton.text()).toContain("Pause calls");
+    expect(wrapper.text()).toContain("Pause failed");
+  });
+
+  it("requires confirmation before cancelling an active run", async () => {
+    api.updateRun.mockResolvedValueOnce({
+      ...run,
+      paused: false,
+      status: "cancelled",
+    });
+    const wrapper = mount(WorkspacePage, {
+      global: { stubs: globalComponents },
+    });
+    await flushPromises();
+
+    const cancelButton = wrapper.get(".session-cancel");
+    await cancelButton.trigger("click");
+    expect(api.updateRun).not.toHaveBeenCalled();
+    expect(cancelButton.text()).toContain("Confirm cancel");
+
+    await cancelButton.trigger("click");
+    await flushPromises();
+
+    expect(api.updateRun).toHaveBeenCalledWith("run-1", "cancel");
+    expect(wrapper.text()).toContain("Run cancelled");
+  });
+
   it("rejects a run that belongs to another request", async () => {
     api.getRun.mockResolvedValueOnce({ ...run, jobPublicId: "RLY-OTHER" });
     const wrapper = mount(WorkspacePage, {
@@ -346,5 +402,44 @@ describe("workspace page", () => {
       timeoutSpy.mockRestore();
       clearTimeoutSpy.mockRestore();
     }
+  });
+
+  it("does not let a stale poll overwrite a newer pause result", async () => {
+    const timers: Array<{ delay?: number; handler: () => void }> = [];
+    let resolvePoll: ((value: typeof run) => void) | undefined;
+    const pollResponse = new Promise<typeof run>((resolve) => {
+      resolvePoll = resolve;
+    });
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    vi.spyOn(window, "setTimeout").mockImplementation((handler, delay) => {
+      timers.push({ delay, handler: () => handler() });
+      return {} as ReturnType<typeof window.setTimeout>;
+    });
+    vi.spyOn(window, "clearTimeout").mockImplementation(() => undefined);
+    api.getRun
+      .mockResolvedValueOnce(run)
+      .mockImplementationOnce(() => pollResponse);
+    api.updateRun.mockResolvedValueOnce({
+      ...run,
+      paused: true,
+      status: "paused",
+    });
+
+    const wrapper = mount(WorkspacePage, {
+      global: { stubs: globalComponents },
+    });
+    await flushPromises();
+
+    timers.find((timer) => timer.delay === 4_000)?.handler();
+    await Promise.resolve();
+    await wrapper.get(".session-heading__actions button").trigger("click");
+    await flushPromises();
+    resolvePoll?.(run);
+    await flushPromises();
+
+    expect(wrapper.get(".session-heading__actions button").text()).toContain(
+      "Resume calls",
+    );
+    wrapper.unmount();
   });
 });

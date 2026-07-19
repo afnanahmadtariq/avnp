@@ -168,6 +168,7 @@ export interface RunSnapshot {
   calls: RunCall[];
   quotes: RunQuote[];
   metrics: RunMetrics;
+  mode?: "fixture" | "live";
   decision: {
     decidedAt: string;
     quoteId: string | null;
@@ -194,6 +195,7 @@ export interface RankedOffer extends RunQuote {
 
 export interface RunReport {
   runId: string;
+  mode?: "fixture" | "live";
   rankedOffers: RankedOffer[];
   recommendation: {
     quoteId: string;

@@ -19,6 +19,8 @@ const discovering = ref(false);
 const starting = ref(false);
 const loadError = ref("");
 const startError = ref("");
+const discoveryMode = ref("");
+const discoveryStatus = ref("");
 let discoveryPollTimer: number | undefined;
 let discoveryPollPending = false;
 
@@ -29,8 +31,33 @@ interface CandidateResponse {
 }
 
 const selectedCount = computed(
-  () => businesses.value.filter((business) => business.selected).length,
+  () =>
+    businesses.value.filter(
+      (business) => business.selected && isCandidateSelectable(business),
+    ).length,
 );
+
+const eligibleCount = computed(
+  () => businesses.value.filter(isCandidateSelectable).length,
+);
+
+const discoveryModeLabel = computed(() => {
+  if (discoveryMode.value === "fixture") return "Demonstration listings";
+  if (discoveryMode.value === "live") return "Live business discovery";
+  return "Business discovery";
+});
+
+const discoveryModeCopy = computed(() => {
+  if (discoveryMode.value === "fixture") {
+    return "These deterministic sample listings exercise the complete approval and calling flow. They are not live provider results.";
+  }
+
+  if (discoveryMode.value === "live") {
+    return "Listings were returned by the configured discovery provider. Phone availability and candidate status determine whether a business can be called.";
+  }
+
+  return "Only businesses with an eligible status and a callable phone number can be selected.";
+});
 
 const sortedBusinesses = computed(() => {
   const result = [...businesses.value];
@@ -86,7 +113,9 @@ function persistSelection(): void {
     selectionStorageKey(),
     JSON.stringify(
       businesses.value
-        .filter((business) => business.selected)
+        .filter(
+          (business) => business.selected && isCandidateSelectable(business),
+        )
         .map((business) => business.id),
     ),
   );
@@ -96,8 +125,22 @@ function applyCandidates(candidates: CandidateBusiness[]): void {
   const saved = storedSelection();
   businesses.value = candidates.map((business) => ({
     ...business,
-    selected: saved ? saved.has(business.id) : business.selected,
+    selected:
+      isCandidateSelectable(business) &&
+      (saved ? saved.has(business.id) : business.selected),
   }));
+}
+
+function applyDiscoveryMetadata(response: CandidateResponse): void {
+  if (response.mode) discoveryMode.value = response.mode.toLowerCase();
+  if (response.status) discoveryStatus.value = response.status.toLowerCase();
+}
+
+function isCandidateSelectable(business: CandidateBusiness): boolean {
+  const status = business.status.toLowerCase();
+  const callablePhone = /^\+[1-9]\d{7,14}$/.test(business.phone ?? "");
+
+  return callablePhone && ["discovered", "shortlisted"].includes(status);
 }
 
 function clearDiscoveryTimer(): void {
@@ -113,10 +156,10 @@ function finishDiscovery(): void {
 }
 
 function discoveryFinished(response: CandidateResponse): boolean {
-  if (response.items.length > 0) return true;
-
   const status = response.status?.toLowerCase();
-  return status !== undefined && status !== "discovering";
+  if (status) return status !== "discovering";
+
+  return response.items.length > 0;
 }
 
 function scheduleDiscoveryPoll(): void {
@@ -136,6 +179,7 @@ async function pollDiscovery(): Promise<void> {
   discoveryPollPending = true;
   try {
     const response = await api.getCandidates(publicId.value);
+    applyDiscoveryMetadata(response);
     applyCandidates(response.items);
 
     if (discoveryFinished(response)) {
@@ -144,11 +188,11 @@ async function pollDiscovery(): Promise<void> {
       scheduleDiscoveryPoll();
     }
   } catch (error: unknown) {
-    finishDiscovery();
     loadError.value =
       error instanceof Error
         ? error.message
-        : "Relay could not refresh business discovery.";
+        : "Live discovery updates were interrupted. Retry to refresh the current results.";
+    scheduleDiscoveryPoll();
   } finally {
     discoveryPollPending = false;
   }
@@ -170,11 +214,13 @@ async function loadBusinesses(forceDiscovery = false): Promise<void> {
   try {
     await nextTick();
     let response: CandidateResponse = await api.getCandidates(publicId.value);
+    applyDiscoveryMetadata(response);
 
     if (forceDiscovery || response.items.length === 0) {
       discovering.value = true;
       if (forceDiscovery || response.status?.toLowerCase() !== "discovering") {
         response = await api.discoverBusinesses(publicId.value);
+        applyDiscoveryMetadata(response);
       }
     }
 
@@ -195,12 +241,10 @@ async function loadBusinesses(forceDiscovery = false): Promise<void> {
 }
 
 function candidateTone(status: string): "neutral" | "success" | "warning" {
-  if (
-    ["eligible", "recommended", "shortlisted"].includes(status.toLowerCase())
-  ) {
+  if (["discovered", "shortlisted"].includes(status.toLowerCase())) {
     return "success";
   }
-  if (["excluded", "review"].includes(status.toLowerCase())) return "warning";
+  if (["declined", "excluded"].includes(status.toLowerCase())) return "warning";
   return "neutral";
 }
 
@@ -210,13 +254,19 @@ function candidateStatus(status: string): string {
 }
 
 function candidateNote(business: CandidateBusiness): string {
+  if (!business.phone) return "No callable phone number was returned";
+  if (!isCandidateSelectable(business)) {
+    return `${candidateStatus(business.status)} candidates cannot be added to a new run`;
+  }
+
   return typeof business.distanceMiles === "number"
     ? `${business.distanceMiles.toFixed(1)} miles from the route`
-    : "Verified for this moving request";
+    : "Matched to this moving request";
 }
 
 function candidateSource(source: string): string {
-  return source.includes("fixture") ? "Relay verified" : source;
+  if (source.toLowerCase().includes("fixture")) return "Relay fixture data";
+  return source.replaceAll("-", " ");
 }
 
 async function startCalls(): Promise<void> {
@@ -227,7 +277,9 @@ async function startCalls(): Promise<void> {
 
   try {
     const selectedIds = businesses.value
-      .filter((business) => business.selected)
+      .filter(
+        (business) => business.selected && isCandidateSelectable(business),
+      )
       .map((business) => business.id);
     const run = await api.startRun(publicId.value, selectedIds);
 
@@ -292,12 +344,30 @@ onBeforeUnmount(() => {
         @retry="startCalls"
       />
 
+      <section v-if="!loading" class="discovery-source" role="status">
+        <div>
+          <StatusBadge
+            :dot="discoveryStatus === 'discovering'"
+            :tone="discoveryMode === 'fixture' ? 'warning' : 'neutral'"
+          >
+            {{ discoveryModeLabel }}
+          </StatusBadge>
+          <strong>{{ discoveryModeCopy }}</strong>
+        </div>
+        <span v-if="discoveryStatus">{{
+          candidateStatus(discoveryStatus)
+        }}</span>
+      </section>
+
       <div v-if="!loading" class="business-layout">
         <section class="business-list-card">
           <div class="list-toolbar">
             <div>
-              <strong>{{ businesses.length }} eligible businesses</strong
-              ><span>Matched to the confirmed route and service scope</span>
+              <strong>{{ eligibleCount }} callable businesses</strong
+              ><span
+                >{{ businesses.length }} total candidates matched to the
+                confirmed brief</span
+              >
             </div>
             <label class="sort-control">
               <span class="sr-only">Sort businesses</span>
@@ -316,12 +386,15 @@ onBeforeUnmount(() => {
             v-for="business in sortedBusinesses"
             :key="business.id"
             class="business-row"
-            :class="{ 'business-row--selected': business.selected }"
+            :class="{
+              'business-row--selected': business.selected,
+              'business-row--unavailable': !isCandidateSelectable(business),
+            }"
           >
             <label class="business-check"
               ><input
                 v-model="business.selected"
-                :disabled="starting"
+                :disabled="starting || !isCandidateSelectable(business)"
                 type="checkbox"
                 @change="persistSelection"
               /><span aria-hidden="true">✓</span
@@ -392,14 +465,58 @@ onBeforeUnmount(() => {
               </div>
               <div>
                 <dt>Coverage check</dt>
-                <dd>Local moving service verified for both locations.</dd>
+                <dd>
+                  {{
+                    isCandidateSelectable(business)
+                      ? "Eligible for this call plan."
+                      : "Not eligible for a new call from its current listing state."
+                  }}
+                </dd>
               </div>
               <div>
-                <dt>Listing evidence</dt>
-                <dd>{{ candidateSource(business.source) }} · API verified</dd>
+                <dt>Discovery source</dt>
+                <dd>{{ candidateSource(business.source) }}</dd>
               </div>
             </dl>
           </article>
+          <section
+            v-if="businesses.length > 0 && eligibleCount < 3"
+            class="business-recovery"
+            role="status"
+          >
+            <div>
+              <h2>
+                {{
+                  discovering
+                    ? "Still searching for callable businesses…"
+                    : "More callable businesses are needed"
+                }}
+              </h2>
+              <p>
+                {{
+                  discovering
+                    ? `Relay has ${eligibleCount} eligible ${eligibleCount === 1 ? "business" : "businesses"} so far and will keep this list updated.`
+                    : `Only ${eligibleCount} eligible ${eligibleCount === 1 ? "business is" : "businesses are"} available. A call run needs at least three.`
+                }}
+              </p>
+            </div>
+            <div class="business-recovery__actions">
+              <button
+                class="button button--secondary"
+                :disabled="discovering"
+                type="button"
+                @click="loadBusinesses(true)"
+              >
+                {{ discovering ? "Searching…" : "Discover again" }}
+              </button>
+              <NuxtLink
+                class="button button--secondary"
+                :to="`/requests/${encodeURIComponent(publicId)}/review`"
+              >
+                Review brief
+              </NuxtLink>
+            </div>
+          </section>
           <div v-if="businesses.length === 0" class="business-empty">
             <h2>
               {{
@@ -450,9 +567,10 @@ onBeforeUnmount(() => {
               <li>
                 <span aria-hidden="true">2</span>
                 <div>
-                  <strong>Give Sara’s brief automated-assistant intro</strong
+                  <strong>Introduce Relay and the call’s purpose</strong
                   ><small
-                    >State her Relay role; answer identity questions
+                    >Sara states her name, Relay role, and reason for calling.
+                    If asked whether she is automated, she answers
                     plainly.</small
                   >
                 </div>
@@ -468,7 +586,9 @@ onBeforeUnmount(() => {
           </details>
           <div class="consent-note">
             <span aria-hidden="true">✓</span>
-            <p>Calling and recording consent confirmed on July 19, 2026.</p>
+            <p>
+              Calling and recording consent is recorded on the confirmed brief.
+            </p>
           </div>
           <button
             class="button button--blue"
@@ -479,9 +599,11 @@ onBeforeUnmount(() => {
             {{
               starting
                 ? "Starting calls…"
-                : selectedCount < 3
-                  ? `Select ${3 - selectedCount} more`
-                  : `Start ${selectedCount} calls`
+                : eligibleCount < 3
+                  ? `${3 - eligibleCount} more callable ${3 - eligibleCount === 1 ? "business" : "businesses"} required`
+                  : selectedCount < 3
+                    ? `Select ${3 - selectedCount} more`
+                    : `Start ${selectedCount} calls`
             }}
             <span v-if="!starting" aria-hidden="true">→</span>
           </button>
@@ -535,6 +657,33 @@ onBeforeUnmount(() => {
   display: grid;
   gap: 14px;
   grid-template-columns: minmax(0, 1fr) 310px;
+}
+.discovery-source {
+  align-items: center;
+  background: var(--relay-surface-soft, #f7f8fb);
+  border: 1px solid var(--relay-line);
+  border-radius: 12px;
+  display: flex;
+  gap: var(--relay-space-4);
+  justify-content: space-between;
+  margin-bottom: var(--relay-space-4);
+  padding: var(--relay-space-3) var(--relay-space-4);
+}
+.discovery-source > div {
+  align-items: center;
+  display: flex;
+  gap: var(--relay-space-3);
+}
+.discovery-source strong {
+  color: var(--relay-muted);
+  font-size: var(--relay-text-meta);
+  font-weight: 500;
+  line-height: var(--relay-leading-meta);
+}
+.discovery-source > span {
+  color: var(--relay-faint);
+  flex: 0 0 auto;
+  font-size: var(--relay-text-meta);
 }
 .business-list-card,
 .launch-panel {
@@ -598,6 +747,13 @@ onBeforeUnmount(() => {
 .business-row--selected {
   background: #fafbff;
 }
+.business-row--unavailable {
+  background: #fbfbfa;
+}
+.business-row--unavailable .business-identity,
+.business-row--unavailable .business-facts {
+  opacity: 0.72;
+}
 .business-check {
   cursor: pointer;
 }
@@ -625,7 +781,7 @@ onBeforeUnmount(() => {
   outline: 3px solid var(--relay-blue-soft);
 }
 .business-check input:disabled + span {
-  cursor: wait;
+  cursor: not-allowed;
   opacity: 0.6;
 }
 .business-monogram {
@@ -833,6 +989,30 @@ onBeforeUnmount(() => {
   justify-items: start;
   padding: var(--relay-space-10) var(--relay-space-5);
 }
+.business-recovery {
+  align-items: center;
+  background: #fff9ed;
+  border-top: 1px solid #f0dfba;
+  display: flex;
+  gap: var(--relay-space-4);
+  justify-content: space-between;
+  padding: var(--relay-space-5);
+}
+.business-recovery h2 {
+  font-size: var(--relay-text-card-title);
+  margin: 0 0 var(--relay-space-1);
+}
+.business-recovery p {
+  color: var(--relay-muted);
+  font-size: var(--relay-text-meta);
+  line-height: var(--relay-leading-meta);
+  margin: 0;
+}
+.business-recovery__actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--relay-space-2);
+}
 .business-empty h2 {
   font-size: var(--relay-text-card-title);
   margin: 0 0 var(--relay-space-2);
@@ -870,6 +1050,11 @@ onBeforeUnmount(() => {
     flex-direction: column;
     gap: 12px;
   }
+  .discovery-source,
+  .discovery-source > div {
+    align-items: flex-start;
+    flex-direction: column;
+  }
   .list-toolbar {
     align-items: flex-start;
     flex-direction: column;
@@ -891,6 +1076,13 @@ onBeforeUnmount(() => {
   .business-details {
     gap: 13px;
     grid-template-columns: 1fr;
+  }
+  .business-recovery {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .business-recovery__actions {
+    flex-wrap: wrap;
   }
 }
 </style>

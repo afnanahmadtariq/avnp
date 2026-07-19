@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from "vue";
 
-import ApiFeedback from "~/components/app/ApiFeedback.vue";
-import type { JobDetail } from "~/types/api";
-import { formatCurrency } from "~/utils/currency";
+import ApiFeedback from "../../../components/app/ApiFeedback.vue";
+import type { JobDetail, JobSpecification } from "../../../types/api";
+import { formatCurrency } from "../../../utils/currency";
 import {
   accessSummary,
   createMovingSpecification,
   homeSizeLabel,
   inventorySummary,
-} from "~/utils/job-specification";
+} from "../../../utils/job-specification";
 
 useSeoMeta({ title: "Review brief · Relay" });
 
@@ -25,6 +25,7 @@ const confirming = ref(false);
 const lastAction = ref<"confirm" | "save">("save");
 const callingConsent = ref(false);
 const recordingConsent = ref(false);
+const incompleteDraft = ref(false);
 const briefForm = ref<HTMLFormElement | null>(null);
 const form = ref({
   access: "",
@@ -58,6 +59,29 @@ const draftLocked = computed(() =>
     job.value?.stage.toLowerCase() ?? "",
   ),
 );
+const draftInventoryCount = computed(() => {
+  const inventory = (job.value?.draft as Partial<JobSpecification> | undefined)
+    ?.inventory;
+  return Array.isArray(inventory) ? inventory.length : 0;
+});
+
+function isCompleteDraft(value: unknown): value is JobSpecification {
+  if (typeof value !== "object" || value === null) return false;
+
+  const candidate = value as Partial<JobSpecification>;
+  return (
+    candidate.vertical === "moving" &&
+    typeof candidate.pickupAddress?.formattedAddress === "string" &&
+    typeof candidate.dropoffAddress?.formattedAddress === "string" &&
+    typeof candidate.movingDate === "string" &&
+    typeof candidate.bedrooms === "number" &&
+    typeof candidate.pickupStairs === "number" &&
+    typeof candidate.dropoffStairs === "number" &&
+    typeof candidate.hasElevator === "boolean" &&
+    Array.isArray(candidate.inventory) &&
+    typeof candidate.packingPreference === "string"
+  );
+}
 
 function timingPreference(notes?: string): string {
   const match = notes?.match(/Timing preference:\s*([^.]*)/i);
@@ -72,18 +96,41 @@ function confirmedNotes(notes?: string): string {
 
 function applyJob(detail: JobDetail): void {
   job.value = detail;
+  const specification: unknown = detail.draft;
+
+  if (!isCompleteDraft(specification)) {
+    incompleteDraft.value = true;
+    editing.value = true;
+    callingConsent.value = false;
+    recordingConsent.value = false;
+    form.value = {
+      access: "",
+      budget: "Best value, not a fixed cap",
+      date: "",
+      destination: "",
+      home: "",
+      inventory: "",
+      notes: "",
+      pickup: "",
+      window: "Flexible timing",
+    };
+    setCurrent(detail.publicId, detail.latestRunId ?? undefined);
+    return;
+  }
+
+  incompleteDraft.value = false;
   form.value = {
-    access: accessSummary(detail.draft),
-    budget: detail.draft.budget
-      ? formatCurrency(detail.draft.budget.amountMinor / 100)
+    access: accessSummary(specification),
+    budget: specification.budget
+      ? formatCurrency(specification.budget.amountMinor / 100)
       : "Best value, not a fixed cap",
-    date: detail.draft.movingDate,
-    destination: detail.draft.dropoffAddress.formattedAddress,
-    home: homeSizeLabel(detail.draft),
-    inventory: inventorySummary(detail.draft),
-    notes: confirmedNotes(detail.draft.notes),
-    pickup: detail.draft.pickupAddress.formattedAddress,
-    window: timingPreference(detail.draft.notes),
+    date: specification.movingDate,
+    destination: specification.dropoffAddress.formattedAddress,
+    home: homeSizeLabel(specification),
+    inventory: inventorySummary(specification),
+    notes: confirmedNotes(specification.notes),
+    pickup: specification.pickupAddress.formattedAddress,
+    window: timingPreference(specification.notes),
   };
   callingConsent.value = detail.consent.calling;
   recordingConsent.value = detail.consent.recording;
@@ -241,6 +288,21 @@ onMounted(loadJob);
         @retry="retryAction"
       />
 
+      <section
+        v-if="job && incompleteDraft && !loading"
+        class="draft-recovery"
+        role="status"
+      >
+        <span aria-hidden="true">!</span>
+        <div>
+          <strong>Complete this saved draft</strong>
+          <p>
+            Relay saved the request before all moving details were available.
+            Add the required facts below, then save and confirm the brief.
+          </p>
+        </div>
+      </section>
+
       <div v-if="job && !loading" class="flow-layout">
         <section class="flow-card brief-form-card">
           <header class="flow-card__header">
@@ -379,7 +441,12 @@ onMounted(loadJob);
                 <strong>Reviewed brief</strong
                 ><small>Guided, document, or voice details</small>
               </div>
-              <StatusBadge :dot="false" tone="success">Loaded</StatusBadge>
+              <StatusBadge
+                :dot="false"
+                :tone="incompleteDraft ? 'warning' : 'success'"
+              >
+                {{ incompleteDraft ? "Needs completion" : "Loaded" }}
+              </StatusBadge>
             </div>
             <div class="source-item">
               <span class="source-icon" aria-hidden="true"
@@ -389,9 +456,7 @@ onMounted(loadJob);
               ></span>
               <div>
                 <strong>Relay specification</strong
-                ><small
-                  >{{ job.draft.inventory.length }} normalized items</small
-                >
+                ><small>{{ draftInventoryCount }} normalized items</small>
               </div>
               <StatusBadge :dot="false">API synced</StatusBadge>
             </div>
@@ -613,6 +678,38 @@ onMounted(loadJob);
 .text-button:disabled {
   cursor: wait;
   opacity: 0.6;
+}
+.draft-recovery {
+  align-items: flex-start;
+  background: #fff9ed;
+  border: 1px solid #f0dfba;
+  border-radius: 12px;
+  display: flex;
+  gap: var(--relay-space-3);
+  margin-bottom: var(--relay-space-4);
+  padding: var(--relay-space-4);
+}
+.draft-recovery > span {
+  align-items: center;
+  background: var(--relay-amber);
+  border-radius: 999px;
+  color: white;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: var(--relay-text-meta);
+  height: 24px;
+  justify-content: center;
+  width: 24px;
+}
+.draft-recovery strong {
+  display: block;
+  font-size: var(--relay-text-control);
+}
+.draft-recovery p {
+  color: var(--relay-muted);
+  font-size: var(--relay-text-meta);
+  line-height: var(--relay-leading-meta);
+  margin: var(--relay-space-1) 0 0;
 }
 .form-section {
   border-bottom: 1px solid var(--relay-line);

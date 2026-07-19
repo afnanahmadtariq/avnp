@@ -1,23 +1,29 @@
 <script setup lang="ts">
-import { computed, onMounted } from "vue";
+import { computed, onMounted, watch } from "vue";
 import { UserButton } from "@clerk/nuxt/components";
+import { useAuth } from "@clerk/nuxt/composables";
 
-import { useAccountIdentity } from "~/composables/useAccountIdentity";
+import { useAccountIdentity } from "../../composables/useAccountIdentity";
 
 const route = useRoute();
 const runtimeConfig = useRuntimeConfig();
 const clerkEnabled = computed(
   () => runtimeConfig.public.authProvider === "clerk",
 );
+const clerkAuth = clerkEnabled.value ? useAuth() : undefined;
 const api = useRelayApi();
 const { publicId, runId } = useRequestContext();
+const { clearCurrent } = useCurrentRequest();
 const hasCurrentRequest = computed(() => publicId.value.length > 0);
 const {
   displayName,
   initials,
   isLoaded: accountIdentityLoaded,
+  resetAccountIdentity,
   syncAccountIdentity,
 } = useAccountIdentity();
+const activeAccountId = useState("relay-active-account-id", () => "");
+const accountOwnerStorageKey = "relay-account-owner";
 
 interface NavItem {
   label: string;
@@ -79,14 +85,16 @@ const accountItems = computed<NavItem[]>(() => [
 ]);
 
 function isActive(item: NavItem): boolean {
-  return route.path === item.to;
+  return (
+    route.path === item.to ||
+    (item.icon === "security" && route.path.startsWith("/account/"))
+  );
 }
 
 function isMobileParent(item: NavItem): boolean {
   return (
-    (item.icon === "call" &&
-      (route.path === `${requestBase.value}/review` ||
-        route.path === `${requestBase.value}/businesses`)) ||
+    (item.icon === "brief" &&
+      route.path === `${requestBase.value}/businesses`) ||
     (item.icon === "profile" &&
       (route.path === "/settings" || route.path.startsWith("/account")))
   );
@@ -97,11 +105,14 @@ function itemTarget(item: NavItem) {
 }
 
 function isMobileHidden(item: NavItem): boolean {
-  return ["brief", "business", "security", "settings"].includes(item.icon);
+  if (item.icon === "plus") return hasCurrentRequest.value;
+  return ["business", "security", "settings"].includes(item.icon);
 }
 
-async function loadAccountIdentity(): Promise<void> {
-  if (route.path === "/profile" || accountIdentityLoaded.value) return;
+async function loadAccountIdentity(force = false): Promise<void> {
+  if (route.path === "/profile" || (!force && accountIdentityLoaded.value)) {
+    return;
+  }
 
   try {
     syncAccountIdentity(await api.getProfile());
@@ -110,7 +121,44 @@ async function loadAccountIdentity(): Promise<void> {
   }
 }
 
-onMounted(loadAccountIdentity);
+async function synchronizeAccountOwner(): Promise<void> {
+  if (typeof window === "undefined" || !clerkAuth?.isLoaded.value) return;
+
+  const nextAccountId = clerkAuth.userId.value ?? "";
+  const storedAccountId = window.localStorage.getItem(accountOwnerStorageKey);
+
+  if (!activeAccountId.value && storedAccountId === nextAccountId) {
+    activeAccountId.value = nextAccountId;
+    await loadAccountIdentity();
+    return;
+  }
+
+  const accountChanged =
+    storedAccountId !== nextAccountId ||
+    (Boolean(activeAccountId.value) && activeAccountId.value !== nextAccountId);
+
+  if (!accountChanged) return;
+
+  clearCurrent();
+  resetAccountIdentity();
+  activeAccountId.value = nextAccountId;
+  window.localStorage.setItem(accountOwnerStorageKey, nextAccountId);
+
+  if (nextAccountId) await loadAccountIdentity(true);
+}
+
+if (clerkAuth) {
+  watch(
+    [clerkAuth.isLoaded, clerkAuth.userId],
+    () => void synchronizeAccountOwner(),
+    { flush: "post" },
+  );
+}
+
+onMounted(async () => {
+  if (clerkEnabled.value) await synchronizeAccountOwner();
+  else await loadAccountIdentity();
+});
 </script>
 
 <template>
@@ -144,7 +192,7 @@ onMounted(loadAccountIdentity);
 
     <aside class="app-sidebar">
       <nav aria-label="Product navigation">
-        <div v-if="hasCurrentRequest" class="nav-group">
+        <div class="nav-group">
           <p>Workspace</p>
           <NuxtLink
             v-for="item in workspaceItems"
@@ -152,6 +200,7 @@ onMounted(loadAccountIdentity);
             class="app-nav-link"
             :class="{
               'app-nav-link--active': isActive(item),
+              'app-nav-link--mobile-hidden': isMobileHidden(item),
               'app-nav-link--mobile-parent': isMobileParent(item),
             }"
             :to="item.to"
@@ -173,7 +222,7 @@ onMounted(loadAccountIdentity);
           </NuxtLink>
         </div>
 
-        <div class="nav-group">
+        <div v-if="hasCurrentRequest" class="nav-group">
           <div class="nav-group__heading">
             <p>Current request</p>
             <span>{{ publicId }}</span>

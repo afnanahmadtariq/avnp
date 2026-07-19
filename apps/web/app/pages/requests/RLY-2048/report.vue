@@ -8,10 +8,7 @@ import { useRequestContext } from "../../../composables/useRequestContext";
 import type { Quote } from "../../../data/demo";
 import type { RankedOffer, RunReport } from "../../../types/api";
 import { formatCurrency } from "../../../utils/currency";
-import {
-  evidencePointLabel,
-  evidenceSupportCopy,
-} from "../../../utils/evidence";
+import { evidencePointLabel } from "../../../utils/evidence";
 
 useSeoMeta({ title: "Final report · Relay" });
 
@@ -23,13 +20,18 @@ const {
   selectQuote,
 } = useDecisionSelection();
 const exportStatus = ref("");
-const scoringPolicyOpen = ref(false);
 const apiError = ref("");
 const apiPending = ref(true);
 const decisionPending = ref(false);
 const apiReport = ref<RunReport>();
 
-function mapRankedOffer(offer: RankedOffer): Quote {
+interface ReportQuote extends Quote {
+  rank: number;
+  rationale: string;
+  riskFlags: string[];
+}
+
+function mapRankedOffer(offer: RankedOffer): ReportQuote {
   return {
     id: offer.id,
     company: offer.businessName,
@@ -37,18 +39,18 @@ function mapRankedOffer(offer: RankedOffer): Quote {
     initialTotal: (offer.originalTotalCents ?? offer.totalCents) / 100,
     rating: offer.rating ?? 0,
     reviewCount: offer.reviewCount ?? 0,
-    arrival: offer.arrivalWindow ?? "Confirmed with business",
+    arrival: offer.arrivalWindow ?? "Not supplied",
     deposit:
       offer.depositCents === undefined
         ? "Not confirmed"
         : `${Math.round((offer.depositCents / offer.totalCents) * 100)}%`,
-    duration: offer.estimatedDuration ?? "Confirmed scope",
-    included:
-      offer.inclusions.length > 0
-        ? offer.inclusions
-        : ["Confirmed moving scope"],
-    fees: [{ label: "All-in quoted total", amount: offer.totalCents / 100 }],
+    duration: offer.estimatedDuration ?? "Not supplied",
+    included: offer.inclusions,
+    fees: [],
     evidenceCount: offer.evidenceCount,
+    rank: offer.rank,
+    rationale: offer.rationale,
+    riskFlags: offer.riskFlags,
     score: offer.score ?? Math.round(offer.confidence * 100),
     ...(apiReport.value?.recommendation.quoteId === offer.id
       ? { recommended: true }
@@ -56,7 +58,7 @@ function mapRankedOffer(offer: RankedOffer): Quote {
   };
 }
 
-const quotes = computed<Quote[]>(() =>
+const quotes = computed<ReportQuote[]>(() =>
   apiReport.value?.rankedOffers.length
     ? apiReport.value.rankedOffers.map(mapRankedOffer)
     : [],
@@ -79,15 +81,32 @@ const recommendation = computed(() => {
     quoteId: result.quoteId,
     savings: result.savingsCents / 100,
     confidence: Math.round(result.confidence * 100),
-    headline: `${result.businessName} is the strongest verified value`,
+    headline:
+      apiReport.value?.mode === "live"
+        ? `${result.businessName} is the strongest verified value`
+        : apiReport.value?.mode === "fixture"
+          ? `${result.businessName} leads this sample comparison`
+          : `${result.businessName} leads this report comparison`,
     rationale: [
-      result.rationale,
-      "The same confirmed scope was used across completed calls",
-      "Unknown charges remain visible instead of becoming zero",
-      "The recommendation balances price, completeness, confidence, and risk",
+      apiReport.value?.mode === "live"
+        ? result.rationale
+        : result.rationale.replaceAll(/verified/gi, "reported"),
     ],
   };
 });
+
+const evidenceIsVerified = computed(() => apiReport.value?.mode === "live");
+const reportModeLabel = computed(() =>
+  apiReport.value?.mode === "fixture"
+    ? "Demonstration report"
+    : apiReport.value?.mode === "live"
+      ? "Live report"
+      : "Negotiation report",
+);
+
+function reportEvidenceLabel(count: number): string {
+  return evidencePointLabel(count, { verified: evidenceIsVerified.value });
+}
 
 const selectedOffer = computed(
   () =>
@@ -110,21 +129,53 @@ const selectedOfferSummary = computed(() => {
   if (!offer) return "No offer is selected.";
 
   if (offer.recommended) {
-    return `Ranked ${selectedOfferRank.value} of ${quotes.value.length}. This is Relay's recommended offer because its price, terms, and evidence produce the strongest verified value.`;
+    if (apiReport.value?.mode === "live") {
+      return `Ranked ${selectedOfferRank.value} of ${quotes.value.length}. This is Relay's recommended offer because its price, terms, and evidence produce the strongest verified value.`;
+    }
+
+    return apiReport.value?.mode === "fixture"
+      ? `Ranked ${selectedOfferRank.value} of ${quotes.value.length}. This is the recommendation produced by the demonstration report; review its sample terms and evidence before continuing.`
+      : `Ranked ${selectedOfferRank.value} of ${quotes.value.length}. This is the recommendation returned by the current report; review its terms and evidence before continuing.`;
   }
 
   const difference = offer.total - (recommended?.total ?? offer.total);
-  return `Ranked ${selectedOfferRank.value} of ${quotes.value.length}. This offer is ${formatCurrency(difference)} above Relay's recommendation; compare its timing, deposit, and included scope before deciding.`;
+  const priceComparison =
+    difference === 0
+      ? "the same price as"
+      : `${formatCurrency(Math.abs(difference))} ${difference > 0 ? "above" : "below"}`;
+  return `Ranked ${selectedOfferRank.value} of ${quotes.value.length}. This offer is ${priceComparison} Relay's recommendation; compare its timing, deposit, and included scope before deciding.`;
 });
 
 const evidenceCount = computed(() =>
   quotes.value.reduce((total, quote) => total + quote.evidenceCount, 0),
 );
-const runnerUpDifference = computed(() => {
+const selectedSavings = computed(() => {
+  const offer = selectedOffer.value;
+  return offer ? Math.max(0, offer.initialTotal - offer.total) : 0;
+});
+const riskFlags = computed(() =>
+  quotes.value.flatMap((quote) =>
+    quote.riskFlags.map((flag) => ({
+      business: quote.company,
+      flag: flag.replaceAll("_", " "),
+      id: `${quote.id}-${flag}`,
+    })),
+  ),
+);
+const recommendedPriceComparison = computed(() => {
   const recommended = recommendedOffer.value;
   const runnerUp = quotes.value.find((quote) => quote.id !== recommended?.id);
 
-  return recommended && runnerUp ? runnerUp.total - recommended.total : 0;
+  if (!recommended || !runnerUp) return "No next-ranked offer is available.";
+
+  const difference = recommended.total - runnerUp.total;
+  if (difference === 0) {
+    return "The recommended and next-ranked offers have the same total.";
+  }
+
+  return `The recommended total is ${formatCurrency(Math.abs(difference))} ${
+    difference > 0 ? "higher" : "lower"
+  } than the next-ranked offer.`;
 });
 const callsHandled = computed(
   () => apiReport.value?.metrics.callsHandled ?? quotes.value.length,
@@ -146,8 +197,11 @@ const reportExport = computed(() => ({
     company: quote.company,
     deposit: quote.deposit,
     evidenceCount: quote.evidenceCount,
-    fees: quote.fees,
+    included: quote.included,
     initialTotal: quote.initialTotal,
+    rank: quote.rank,
+    rationale: quote.rationale,
+    riskFlags: quote.riskFlags,
     score: quote.score,
     total: quote.total,
   })),
@@ -192,6 +246,8 @@ async function loadReport(): Promise<void> {
     apiReport.value = loadedReport;
     if (loadedReport.decision?.quoteId) {
       markDecisionSaved(loadedReport.decision.quoteId);
+    } else {
+      selectQuote(loadedReport.recommendation.quoteId);
     }
     setCurrent(job.publicId, resolvedRunId);
   } catch (error: unknown) {
@@ -204,18 +260,16 @@ async function loadReport(): Promise<void> {
   }
 }
 
-async function saveRecommendedDecision(): Promise<void> {
+async function saveSelectedDecision(): Promise<void> {
   const report = apiReport.value;
-  if (!report || decisionPending.value) return;
+  const offer = selectedOffer.value;
+  if (!report || !offer || decisionPending.value) return;
 
   decisionPending.value = true;
   apiError.value = "";
   try {
-    await useRelayApi().saveDecision(
-      report.runId,
-      report.recommendation.quoteId,
-    );
-    markDecisionSaved(report.recommendation.quoteId);
+    await useRelayApi().saveDecision(report.runId, offer.id);
+    markDecisionSaved(offer.id);
   } catch (error: unknown) {
     apiError.value =
       error instanceof Error
@@ -271,8 +325,8 @@ onMounted(() => void loadReport());
           <h1>Your comparison is ready.</h1>
           <p>
             {{ quotes.length }} businesses returned comparable offers from the
-            same confirmed brief. Relay ranked each outcome using price, fee
-            completeness, timing, reputation, and evidence quality.
+            same confirmed brief. The ranked results below preserve the terms,
+            evidence counts, and risk flags returned by the report.
           </p>
         </div>
         <div class="report-export">
@@ -298,7 +352,8 @@ onMounted(() => void loadReport());
       <section v-if="apiReport" class="recommendation-hero">
         <div class="recommendation-hero__main">
           <div class="verified-label">
-            <span aria-hidden="true">✓</span> Relay recommendation
+            <span aria-hidden="true">✓</span> {{ reportModeLabel }} · Relay
+            recommendation
           </div>
           <h2>{{ recommendation.headline }}.</h2>
           <p>
@@ -309,14 +364,14 @@ onMounted(() => void loadReport());
               class="button button--blue"
               :disabled="decisionPending"
               type="button"
-              @click="saveRecommendedDecision"
+              @click="saveSelectedDecision"
             >
               {{
                 decisionPending
                   ? "Saving decision…"
                   : decisionSaved
                     ? "Decision saved"
-                    : "Save this decision"
+                    : `Save ${selectedOffer?.company ?? "selected offer"}`
               }}
               <span aria-hidden="true">{{
                 decisionPending ? "" : decisionSaved ? "✓" : "→"
@@ -328,19 +383,20 @@ onMounted(() => void loadReport());
         </div>
         <div class="recommendation-hero__metrics">
           <div>
-            <span>Quoted total</span
-            ><strong>{{ formatCurrency(recommendedOffer?.total ?? 0) }}</strong
-            ><small
-              >{{ formatCurrency(recommendation.savings) }} below opening
+            <span>Selected total</span
+            ><strong v-if="selectedOffer">{{
+              formatCurrency(selectedOffer.total)
+            }}</strong
+            ><strong v-else>No ranked offer</strong
+            ><small v-if="selectedOffer"
+              >{{ formatCurrency(selectedSavings) }} below its opening
               offer</small
             >
           </div>
           <div>
-            <span>Confidence</span
+            <span>Recommendation confidence</span
             ><strong>{{ recommendation.confidence }}%</strong
-            ><small>{{
-              evidencePointLabel(evidenceCount, { verified: true })
-            }}</small>
+            ><small>{{ reportEvidenceLabel(evidenceCount) }}</small>
           </div>
         </div>
       </section>
@@ -353,9 +409,9 @@ onMounted(() => void loadReport());
                 <span>Ranked comparison</span>
                 <h2>Comparable offers</h2>
               </div>
-              <StatusBadge :dot="false" tone="success"
-                >Scope verified</StatusBadge
-              >
+              <StatusBadge :dot="false" tone="neutral">
+                {{ quotes.length }} ranked offers
+              </StatusBadge>
             </header>
             <p class="report-card__intro">
               All totals use the same confirmed moving scope. Missing terms
@@ -420,17 +476,19 @@ onMounted(() => void loadReport());
                 <div>
                   <dt>Evidence</dt>
                   <dd>
-                    {{
-                      evidencePointLabel(selectedOffer.evidenceCount, {
-                        verified: true,
-                      })
-                    }}
+                    {{ reportEvidenceLabel(selectedOffer.evidenceCount) }}
                   </dd>
                 </div>
               </dl>
               <div class="selected-offer-review__scope">
                 <strong>Included scope</strong>
-                <span>{{ selectedOffer.included.join(" · ") }}</span>
+                <span>
+                  {{
+                    selectedOffer.included.length > 0
+                      ? selectedOffer.included.join(" · ")
+                      : "Scope/itemization not supplied"
+                  }}
+                </span>
               </div>
             </section>
           </section>
@@ -446,127 +504,79 @@ onMounted(() => void loadReport());
               <article>
                 <span class="factor-score">01</span>
                 <div>
-                  <h3>Verified all-in price</h3>
-                  <p>
-                    {{ formatCurrency(runnerUpDifference) }} lower than the
-                    next-best offer, with unresolved charges kept visible.
-                  </p>
+                  <h3>Reported all-in price</h3>
+                  <p>{{ recommendedPriceComparison }}</p>
                 </div>
-                <strong>Best</strong>
+                <strong>Rank 1</strong>
               </article>
               <article>
                 <span class="factor-score">02</span>
                 <div>
-                  <h3>Arrival certainty</h3>
+                  <h3>Report rationale</h3>
                   <p>
-                    {{ recommendedOffer?.arrival }} is recorded alongside the
-                    offer instead of being separated from the price.
+                    {{ recommendation.rationale[0] }}
                   </p>
                 </div>
-                <strong>Best</strong>
+                <strong>{{ recommendedOffer?.score ?? 0 }}/100</strong>
               </article>
               <article>
                 <span class="factor-score">03</span>
                 <div>
-                  <h3>Deposit terms</h3>
+                  <h3>Included scope</h3>
                   <p>
-                    The {{ recommendedOffer?.deposit }} deposit is included in
-                    the comparison before the decision is saved.
+                    {{
+                      recommendedOffer?.included.length
+                        ? recommendedOffer.included.join(" · ")
+                        : "Scope/itemization was not supplied for this offer."
+                    }}
                   </p>
                 </div>
-                <strong>Best</strong>
+                <strong
+                  >{{ recommendedOffer?.included.length ?? 0 }} items</strong
+                >
               </article>
               <article>
                 <span class="factor-score">04</span>
                 <div>
                   <h3>Evidence quality</h3>
                   <p>
+                    The report includes
                     {{
-                      evidenceSupportCopy(
-                        recommendedOffer?.evidenceCount ?? 0,
-                        "the recommended terms.",
-                        { verified: true },
-                      )
+                      reportEvidenceLabel(recommendedOffer?.evidenceCount ?? 0)
                     }}
+                    for the recommended offer.
                   </p>
                 </div>
-                <strong>High</strong>
+                <strong
+                  >{{ recommendedOffer?.evidenceCount ?? 0 }} points</strong
+                >
               </article>
             </div>
           </section>
 
           <section class="risk-card">
-            <span class="risk-card__icon" aria-hidden="true">!</span>
+            <span class="risk-card__icon" aria-hidden="true">
+              {{ riskFlags.length > 0 ? "!" : "✓" }}
+            </span>
             <div>
-              <span>Risk policy applied</span>
-              <h2>Low prices are reviewed before ranking.</h2>
-              <p>
-                Relay flags any offer 30% below the comparable market baseline.
-                No current offer crossed that threshold. Unknown fees would
-                remain “Not confirmed.”
-              </p>
-            </div>
-            <button
-              aria-controls="scoring-policy"
-              :aria-expanded="scoringPolicyOpen"
-              type="button"
-              @click="scoringPolicyOpen = !scoringPolicyOpen"
-            >
-              {{
-                scoringPolicyOpen
-                  ? "Hide scoring policy"
-                  : "View scoring policy"
-              }}
-            </button>
-            <section
-              v-if="scoringPolicyOpen"
-              id="scoring-policy"
-              aria-labelledby="scoring-policy-title"
-              class="scoring-policy"
-            >
-              <div>
-                <span>How Relay ranks comparable offers</span>
-                <h3 id="scoring-policy-title">Scoring policy</h3>
-                <p>
-                  Scores explain the recommendation; they never replace the
-                  underlying quote or evidence.
-                </p>
-              </div>
-              <dl>
-                <div>
-                  <dt>Verified price</dt>
-                  <dd>35%</dd>
-                </div>
-                <div>
-                  <dt>Fee completeness</dt>
-                  <dd>25%</dd>
-                </div>
-                <div>
-                  <dt>Timing and service fit</dt>
-                  <dd>15%</dd>
-                </div>
-                <div>
-                  <dt>Evidence quality</dt>
-                  <dd>15%</dd>
-                </div>
-                <div>
-                  <dt>Business reputation</dt>
-                  <dd>10%</dd>
-                </div>
-              </dl>
-              <ul>
-                <li>
-                  Offers 30% below the comparable baseline are held for review.
-                </li>
-                <li>
-                  Unknown fees stay unconfirmed; they are never treated as zero.
-                </li>
-                <li>
-                  Callbacks and declines remain visible but are not ranked as
-                  completed quotes.
+              <span>Reported risk flags</span>
+              <h2>
+                {{
+                  riskFlags.length > 0
+                    ? `${riskFlags.length} flags need review.`
+                    : "No risk flags were returned for these offers."
+                }}
+              </h2>
+              <ul v-if="riskFlags.length > 0">
+                <li v-for="risk in riskFlags" :key="risk.id">
+                  <strong>{{ risk.business }}:</strong> {{ risk.flag }}
                 </li>
               </ul>
-            </section>
+              <p v-else>
+                This reflects the current API report only; review the quote and
+                call evidence before acting on a saved decision.
+              </p>
+            </div>
           </section>
         </div>
 
@@ -580,16 +590,16 @@ onMounted(() => void loadReport());
             </header>
             <dl>
               <div>
+                <dt>Selected business</dt>
+                <dd>{{ selectedOffer?.company }}</dd>
+              </div>
+              <div>
                 <dt>Arrival window</dt>
-                <dd>{{ recommendedOffer?.arrival }}</dd>
+                <dd>{{ selectedOffer?.arrival }}</dd>
               </div>
               <div>
                 <dt>Deposit</dt>
-                <dd>{{ recommendedOffer?.deposit }}</dd>
-              </div>
-              <div>
-                <dt>Verified savings</dt>
-                <dd>{{ formatCurrency(recommendation.savings) }}</dd>
+                <dd>{{ selectedOffer?.deposit }}</dd>
               </div>
               <div>
                 <dt>Calls handled</dt>
@@ -601,31 +611,17 @@ onMounted(() => void loadReport());
             <header>
               <div>
                 <span>Evidence</span>
-                <h2>
-                  {{ evidencePointLabel(evidenceCount, { verified: true }) }}
-                </h2>
+                <h2>{{ reportEvidenceLabel(evidenceCount) }}</h2>
               </div>
             </header>
             <ul>
-              <li>
+              <li v-for="quote in quotes" :key="quote.id">
                 <span aria-hidden="true">✓</span>
                 <div>
-                  <strong>Guaranteed total</strong
-                  ><small>Transcript · 12:42</small>
-                </div>
-              </li>
-              <li>
-                <span aria-hidden="true">✓</span>
-                <div>
-                  <strong>No fuel surcharge</strong
-                  ><small>Revised quote · line 8</small>
-                </div>
-              </li>
-              <li>
-                <span aria-hidden="true">✓</span>
-                <div>
-                  <strong>One-hour arrival</strong
-                  ><small>Transcript · 12:39</small>
+                  <strong>{{ quote.company }}</strong>
+                  <small>
+                    {{ reportEvidenceLabel(quote.evidenceCount) }}
+                  </small>
                 </div>
               </li>
             </ul>
@@ -965,79 +961,14 @@ onMounted(() => void loadReport());
   line-height: var(--relay-leading-meta);
   margin: 0;
 }
-.risk-card button {
-  background: white;
-  border: 1px solid #e4cfa3;
-  border-radius: 8px;
-  color: var(--relay-amber);
-  font-size: var(--relay-text-control);
-  min-height: 44px;
-  padding: 0 10px;
+.risk-card ul {
+  margin: var(--relay-space-2) 0 0;
+  padding-left: var(--relay-space-5);
 }
-.scoring-policy {
-  background: rgb(255 255 255 / 72%);
-  border: 1px solid #ead8b1;
-  border-radius: 11px;
-  display: grid;
-  gap: 16px;
-  grid-column: 1 / -1;
-  grid-template-columns: minmax(170px, 0.72fr) minmax(0, 1.28fr);
-  padding: 17px;
-}
-.scoring-policy > div > span {
-  color: var(--relay-amber);
-  display: block;
-  font-size: var(--relay-text-meta);
-  font-weight: 650;
-  letter-spacing: 0.07em;
-  margin-bottom: 5px;
-  text-transform: uppercase;
-}
-.scoring-policy h3 {
-  font-size: var(--relay-text-card-title);
-  font-weight: 630;
-  margin: 0 0 6px;
-}
-.scoring-policy p,
-.scoring-policy li,
-.scoring-policy dt,
-.scoring-policy dd {
+.risk-card li {
+  color: var(--relay-muted);
   font-size: var(--relay-text-meta);
   line-height: var(--relay-leading-meta);
-}
-.scoring-policy p {
-  color: var(--relay-muted);
-  margin: 0;
-}
-.scoring-policy dl {
-  display: grid;
-  gap: 0 13px;
-  grid-template-columns: 1fr 1fr;
-  margin: 0;
-}
-.scoring-policy dl > div {
-  border-bottom: 1px solid #eadfc6;
-  display: flex;
-  justify-content: space-between;
-  padding: 7px 0;
-}
-.scoring-policy dt {
-  color: var(--relay-muted);
-}
-.scoring-policy dd {
-  font-weight: 650;
-  margin: 0;
-}
-.scoring-policy ul {
-  border-top: 1px solid #eadfc6;
-  display: grid;
-  gap: 5px;
-  grid-column: 1 / -1;
-  margin: 0;
-  padding: 13px 0 0 18px;
-}
-.scoring-policy li {
-  color: var(--relay-muted);
 }
 .report-summary dl {
   margin: 0;
@@ -1156,16 +1087,6 @@ onMounted(() => void loadReport());
   }
   .risk-card {
     grid-template-columns: auto 1fr;
-  }
-  .risk-card button {
-    grid-column: span 2;
-  }
-  .scoring-policy {
-    grid-template-columns: 1fr;
-  }
-  .scoring-policy dl,
-  .scoring-policy ul {
-    grid-column: auto;
   }
   .report-aside {
     grid-template-columns: minmax(0, 1fr);

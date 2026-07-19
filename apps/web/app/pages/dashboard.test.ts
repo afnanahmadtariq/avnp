@@ -42,7 +42,11 @@ describe("dashboard request context", () => {
         stubs: {
           ApiFeedback: true,
           AppShell: { template: "<div><slot /></div>" },
-          NuxtLink: { props: ["to"], template: "<a><slot /></a>" },
+          NuxtLink: {
+            props: ["to"],
+            template:
+              "<a :href=\"typeof to === 'string' ? to : to.path\"><slot /></a>",
+          },
           StatusBadge: { template: "<span><slot /></span>" },
         },
       },
@@ -52,5 +56,48 @@ describe("dashboard request context", () => {
     expect(setCurrent).toHaveBeenCalledWith("RLY-BD2E9FEE");
     expect(clearCurrent).not.toHaveBeenCalled();
     expect(wrapper.text()).toContain("Charlotte move");
+  });
+
+  it("routes an ended run back through business approval", async () => {
+    const restartJob = {
+      ...jobs[0],
+      nextAction: "start_over",
+      publicId: "RLY-RESTART",
+      stage: "failed",
+      status: "failed",
+    };
+    vi.stubGlobal("useSeoMeta", vi.fn());
+    vi.stubGlobal("useRelayApi", () => ({
+      getJobs: vi.fn().mockResolvedValue({ items: [restartJob] }),
+    }));
+    vi.stubGlobal("useRequestContext", () => ({
+      currentRequest: ref({ publicId: restartJob.publicId }),
+      setCurrent: vi.fn(),
+    }));
+    vi.stubGlobal("useCurrentRequest", () => ({ clearCurrent: vi.fn() }));
+
+    const wrapper = mount(DashboardPage, {
+      global: {
+        stubs: {
+          ApiFeedback: true,
+          AppShell: { template: "<div><slot /></div>" },
+          NuxtLink: {
+            props: ["to"],
+            template:
+              "<a :href=\"typeof to === 'string' ? to : to.path\"><slot /></a>",
+          },
+          StatusBadge: { template: "<span><slot /></span>" },
+        },
+      },
+    });
+    await flushPromises();
+
+    const openLink = wrapper.get(".request-card__open");
+    expect(openLink.attributes("href")).toBe(
+      "/requests/RLY-RESTART/businesses",
+    );
+    expect(wrapper.text()).toContain(
+      "The previous run ended. Review the businesses before starting again.",
+    );
   });
 });
