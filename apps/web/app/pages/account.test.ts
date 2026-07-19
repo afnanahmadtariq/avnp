@@ -27,6 +27,11 @@ vi.mock("../composables/useAccountIdentity", () => ({
   useAccountIdentity: () => accountIdentity,
 }));
 
+vi.mock("vue-router", async (importOriginal) => {
+  const original = (await importOriginal()) as Record<string, unknown>;
+  return { ...original, onBeforeRouteLeave: vi.fn() };
+});
+
 const globalComponents = {
   AppShell: {
     template: "<div><slot /></div>",
