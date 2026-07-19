@@ -13,6 +13,21 @@ export { healthResponseSchema } from "./health.js";
 export type { HealthResponse } from "./health.js";
 
 export {
+  evidenceRetentionDaysSchema,
+  updateUserProfileRequestSchema,
+  updateUserSettingsRequestSchema,
+  userProfileSchema,
+  userSettingsSchema,
+} from "./account.js";
+export type {
+  EvidenceRetentionDays,
+  UpdateUserProfileRequest,
+  UpdateUserSettingsRequest,
+  UserProfile,
+  UserSettings,
+} from "./account.js";
+
+export {
   inventoryItemSchema,
   jobSchema,
   jobSpecificationSchema,
@@ -27,6 +42,41 @@ export type {
   PackingPreference,
 } from "./job.js";
 
+export {
+  confirmJobRequestSchema,
+  confirmJobResponseSchema,
+  createJobRequestSchema,
+  jobCandidateSchema,
+  jobCandidatesResponseSchema,
+  jobCandidateStatusSchema,
+  jobDetailsSchema,
+  jobListResponseSchema,
+  jobSpecificationSourceMetadataSchema,
+  jobSpecificationSourceSchema,
+  jobSpecificationVersionSchema,
+  jobSummarySchema,
+  publicJobIdSchema,
+  selectJobCandidatesRequestSchema,
+  updateJobDraftRequestSchema,
+} from "./api-jobs.js";
+export type {
+  ConfirmJobRequest,
+  ConfirmJobResponse,
+  CreateJobRequest,
+  JobCandidate,
+  JobCandidatesResponse,
+  JobCandidateStatus,
+  JobDetails,
+  JobListResponse,
+  JobSpecificationSource,
+  JobSpecificationSourceMetadata,
+  JobSpecificationVersion,
+  JobSummary,
+  PublicJobId,
+  SelectJobCandidatesRequest,
+  UpdateJobDraftRequest,
+} from "./api-jobs.js";
+
 export { businessSchema, businessSourceSchema } from "./business.js";
 export type { Business, BusinessSource } from "./business.js";
 
@@ -37,6 +87,8 @@ export {
   quoteFeeSchema,
   quotePriceRangeSchema,
   quotePricingModelSchema,
+  quoteRiskFlagSchema,
+  quoteRiskFlagSeveritySchema,
   quoteSchema,
   quoteStatusSchema,
   quoteTermsSchema,
@@ -49,6 +101,8 @@ export type {
   QuoteFeeCategory,
   QuotePriceRange,
   QuotePricingModel,
+  QuoteRiskFlag,
+  QuoteRiskFlagSeverity,
   QuoteStatus,
   QuoteTerms,
 } from "./quote.js";
@@ -72,3 +126,48 @@ export {
   callStatusSchema,
 } from "./call.js";
 export type { CallOutcome, CallOutcomeType, CallStatus } from "./call.js";
+
+export {
+  createNegotiationRunRequestSchema,
+  decisionOutcomeSchema,
+  decisionSchema,
+  negotiationRunReferenceSchema,
+  negotiationRunSnapshotSchema,
+  negotiationRunStatusSchema,
+  recommendationFactorSchema,
+  recommendationSchema,
+  reportEvidenceSchema,
+  runCallSnapshotSchema,
+  runConsentSchema,
+  runControlRequestSchema,
+  runEventActorSchema,
+  runEventSchema,
+  runEventsResponseSchema,
+  runEventTypeSchema,
+  runProgressSchema,
+  runReportSchema,
+  runReportSummarySchema,
+  saveDecisionRequestSchema,
+} from "./api-runs.js";
+export type {
+  CreateNegotiationRunRequest,
+  Decision,
+  DecisionOutcome,
+  NegotiationRunReference,
+  NegotiationRunSnapshot,
+  NegotiationRunStatus,
+  Recommendation,
+  RecommendationFactor,
+  ReportEvidence,
+  RunCallSnapshot,
+  RunConsent,
+  RunControlRequest,
+  RunEvent,
+  RunEventActor,
+  RunEventsResponse,
+  RunEventType,
+  RunProgress,
+  RunReport,
+  RunReportSummary,
+  SaveDecisionRequest,
+} from "./api-runs.js";

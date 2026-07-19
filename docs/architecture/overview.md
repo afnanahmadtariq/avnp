@@ -53,8 +53,8 @@ Owns discovery jobs, call sessions, retries, conversation orchestration, quote e
 
 1. The API persists a draft job specification assembled from voice and documents.
 2. User confirmation creates an immutable version identifier.
-3. The API creates a negotiation run and enqueues discovery/call work with that version.
-4. The worker executes provider operations and writes attempt/evidence state idempotently.
+3. The API creates a negotiation run and its outbox event in one transaction.
+4. Queue messages contain stable record identifiers; the worker reloads the confirmed version and executes provider operations idempotently.
 5. Domain policy normalizes and scores completed quotes.
 6. Progress events update the web without blocking the worker.
 7. The final report references the exact job version, calls, transcripts, recordings, quotes, flags, and recommendation factors.

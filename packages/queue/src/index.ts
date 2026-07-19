@@ -1,11 +1,4 @@
-import type {
-  Business,
-  CallOutcome,
-  Job,
-  Negotiation,
-  NegotiationStrategy,
-  Quote,
-} from "@relay/contracts";
+import type { NegotiationStrategy } from "@relay/contracts";
 
 export const queueNames = {
   businessDiscovery: "business-discovery",
@@ -17,39 +10,42 @@ export const queueNames = {
 export type QueueName = (typeof queueNames)[keyof typeof queueNames];
 
 export interface DiscoverBusinessesPayload {
-  readonly job: Job;
+  readonly jobId: string;
   readonly limit: number;
+  readonly runId: string;
   readonly searchRadiusKm: number;
+  readonly specificationVersionId: string;
 }
 
 export interface PlaceCallPayload {
-  readonly business: Business;
-  readonly job: Job;
+  readonly businessId: string;
+  readonly callId: string;
+  readonly runId: string;
+  readonly specificationVersionId: string;
   readonly strategy: NegotiationStrategy;
 }
 
 export interface ProcessCallOutcomePayload {
-  readonly businessId: string;
-  readonly jobId: string;
-  readonly outcome: CallOutcome;
+  readonly callId: string;
+  readonly providerEventId: string;
+  readonly runId: string;
 }
 
 export interface NormalizeQuotePayload {
-  readonly business: Business;
-  readonly jobId: string;
-  readonly quote: Quote;
+  readonly quoteId: string;
+  readonly runId: string;
 }
 
 export interface RankQuotesPayload {
-  readonly jobId: string;
-  readonly quotes: readonly Quote[];
+  readonly runId: string;
 }
 
 export interface ContinueNegotiationPayload {
-  readonly currentQuote?: Quote;
-  readonly negotiation: Negotiation;
+  readonly currentQuoteId?: string;
+  readonly negotiationId: string;
+  readonly runId: string;
   /** Must refer to a real, evidenced quote; never synthesize leverage. */
-  readonly truthfulCompetingQuote?: Quote;
+  readonly truthfulCompetingQuoteId?: string;
 }
 
 export interface QueuePayloadMap {

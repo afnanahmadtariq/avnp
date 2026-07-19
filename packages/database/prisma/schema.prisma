@@ -45,6 +45,19 @@ enum NegotiationStatus {
   FAILED
 }
 
+enum NegotiationRunStatus {
+  DRAFT
+  QUEUED
+  DISCOVERING
+  CALLING
+  PAUSED
+  COMPARING
+  COMPLETED
+  PARTIALLY_COMPLETED
+  CANCELLED
+  FAILED
+}
+
 enum CallStatus {
   QUEUED
   DIALING
@@ -66,6 +79,17 @@ enum PricingModel {
   FIXED
   HOURLY
   RANGE
+}
+
+enum QuoteEstimateType {
+  BINDING
+  NON_BINDING
+}
+
+enum DecisionOutcome {
+  QUOTE_SELECTED
+  DEFERRED
+  DECLINED_ALL
 }
 
 enum EvidenceKind {
@@ -94,83 +118,161 @@ model User {
   id          String   @id @default(cuid())
   email       String?  @unique
   displayName String?
+  profile     Json?
+  settings    Json?
   jobs        Job[]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
 
 model Job {
-  id                String         @id @default(cuid())
-  userId            String?
-  user              User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
-  vertical          String         @default("moving")
-  status            JobStatus      @default(DRAFT)
-  specification     Json
-  targetBudgetCents Int?
-  currency          String         @default("USD")
-  confirmedAt       DateTime?
-  completedAt       DateTime?
-  candidates        JobBusiness[]
-  negotiations      Negotiation[]
-  calls             Call[]
-  quotes            Quote[]
-  evidence          Evidence[]
-  auditEvents       AuditEvent[]
-  webhookEvents     WebhookEvent[]
-  createdAt         DateTime       @default(now())
-  updatedAt         DateTime       @updatedAt
+  id                    String                    @id @default(cuid())
+  publicId              String                    @unique @default(cuid())
+  title                 String                    @default("Moving request")
+  userId                String?
+  user                  User?                     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  vertical              String                    @default("moving")
+  status                JobStatus                 @default(DRAFT)
+  specification         Json
+  targetBudgetCents     Int?
+  currency              String                    @default("USD")
+  confirmedAt           DateTime?
+  completedAt           DateTime?
+  candidates            JobBusiness[]
+  negotiations          Negotiation[]
+  calls                 Call[]
+  quotes                Quote[]
+  evidence              Evidence[]
+  auditEvents           AuditEvent[]
+  webhookEvents         WebhookEvent[]
+  specificationVersions JobSpecificationVersion[]
+  runs                  NegotiationRun[]
+  createdAt             DateTime                  @default(now())
+  updatedAt             DateTime                  @updatedAt
 
   @@index([userId, createdAt])
   @@index([status, updatedAt])
 }
 
+/// Confirmed versions are append-only application records. Corrections create a
+/// new version instead of updating the stored specification.
+model JobSpecificationVersion {
+  id             String           @id @default(cuid())
+  jobId          String
+  job            Job              @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  version        Int
+  contentDigest  String
+  specification  Json
+  sourceMetadata Json?
+  confirmedAt    DateTime
+  runs           NegotiationRun[]
+  createdAt      DateTime         @default(now())
+
+  @@unique([jobId, version])
+  @@unique([jobId, contentDigest])
+  @@index([jobId, confirmedAt])
+}
+
+model NegotiationRun {
+  id                         String                  @id @default(cuid())
+  jobId                      String
+  specificationVersionId     String
+  job                        Job                     @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  specificationVersion       JobSpecificationVersion @relation(fields: [specificationVersionId], references: [id])
+  status                     NegotiationRunStatus    @default(DRAFT)
+  correlationId              String                  @unique
+  configurationVersion       String                  @default("moving-v1")
+  callingConsentAt           DateTime?
+  recordingConsentAt         DateTime?
+  aiDisclosureAcknowledgedAt DateTime?
+  consentVersion             String?
+  pausedAt                   DateTime?
+  pauseReason                String?
+  startedAt                  DateTime?
+  completedAt                DateTime?
+  cancelledAt                DateTime?
+  failureCode                String?
+  failureMessage             String?
+  negotiations               Negotiation[]
+  calls                      Call[]
+  quotes                     Quote[]
+  evidence                   Evidence[]
+  events                     RunEvent[]
+  recommendation             Recommendation?
+  decision                   Decision?
+  createdAt                  DateTime                @default(now())
+  updatedAt                  DateTime                @updatedAt
+
+  @@index([jobId, status])
+  @@index([specificationVersionId, createdAt])
+}
+
+model RunEvent {
+  id            String         @id @default(cuid())
+  runId         String
+  run           NegotiationRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  sequence      Int
+  eventType     String
+  actor         AuditActor
+  correlationId String
+  payload       Json
+  occurredAt    DateTime
+  createdAt     DateTime       @default(now())
+
+  @@unique([runId, sequence])
+  @@index([runId, occurredAt])
+  @@index([correlationId])
+}
+
 model Business {
-  id            String          @id @default(cuid())
-  provider      String
-  externalId    String?
-  name          String
-  phone         String?
-  websiteUrl    String?
-  address       Json?
-  rating        Decimal?        @db.Decimal(3, 2)
-  reviewCount   Int?
-  verification  Json?
-  candidates    JobBusiness[]
-  negotiations  Negotiation[]
-  calls         Call[]
-  quotes        Quote[]
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
+  id           String        @id @default(cuid())
+  provider     String
+  externalId   String?
+  name         String
+  phone        String?
+  websiteUrl   String?
+  address      Json?
+  rating       Decimal?      @db.Decimal(3, 2)
+  reviewCount  Int?
+  verification Json?
+  candidates   JobBusiness[]
+  negotiations Negotiation[]
+  calls        Call[]
+  quotes       Quote[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
 
   @@unique([provider, externalId])
   @@index([name])
 }
 
 model JobBusiness {
-  jobId         String
-  businessId    String
-  job           Job             @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  business      Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  status        CandidateStatus @default(DISCOVERED)
-  discoveryRank Int?
-  relevanceScore Decimal?       @db.Decimal(5, 2)
+  jobId           String
+  businessId      String
+  job             Job             @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  business        Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  status          CandidateStatus @default(DISCOVERED)
+  discoveryRank   Int?
+  relevanceScore  Decimal?        @db.Decimal(5, 2)
   exclusionReason String?
-  discoveredAt  DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
+  discoveredAt    DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
 
   @@id([jobId, businessId])
   @@index([jobId, status])
 }
 
 model Negotiation {
-  id                  String             @id @default(cuid())
+  id                  String              @id @default(cuid())
   jobId               String
+  runId               String?
   businessId          String
-  job                 Job                @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  business            Business           @relation(fields: [businessId], references: [id])
+  job                 Job                 @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  run                 NegotiationRun?     @relation(fields: [runId], references: [id], onDelete: SetNull)
+  business            Business            @relation(fields: [businessId], references: [id])
   strategy            NegotiationStrategy
-  status              NegotiationStatus  @default(PENDING)
-  currentRound        Int                @default(0)
+  status              NegotiationStatus   @default(PENDING)
+  currentRound        Int                 @default(0)
   baselineQuoteId     String?
   acceptedQuoteId     String?
   startingAmountCents Int?
@@ -182,93 +284,106 @@ model Negotiation {
   calls               Call[]
   quotes              Quote[]
   turns               NegotiationTurn[]
-  createdAt           DateTime           @default(now())
-  updatedAt           DateTime           @updatedAt
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
 
   @@index([jobId, status])
+  @@index([runId, status])
   @@index([businessId, createdAt])
 }
 
 model NegotiationTurn {
-  id            String       @id @default(cuid())
+  id            String      @id @default(cuid())
   negotiationId String
-  negotiation   Negotiation  @relation(fields: [negotiationId], references: [id], onDelete: Cascade)
+  negotiation   Negotiation @relation(fields: [negotiationId], references: [id], onDelete: Cascade)
   speaker       TurnSpeaker
-  content       String       @db.Text
+  content       String      @db.Text
   action        String?
   extractedData Json?
   occurredAt    DateTime
-  createdAt     DateTime     @default(now())
+  createdAt     DateTime    @default(now())
 
   @@index([negotiationId, occurredAt])
 }
 
 model Call {
-  id                    String       @id @default(cuid())
-  jobId                 String
-  businessId            String
-  negotiationId         String?
-  job                   Job          @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  business              Business     @relation(fields: [businessId], references: [id])
-  negotiation           Negotiation? @relation(fields: [negotiationId], references: [id], onDelete: SetNull)
-  provider              String
-  providerCallId        String?
-  status                CallStatus   @default(QUEUED)
-  attempt               Int          @default(1)
-  locale                String       @default("en-US")
-  recordingConsentAt    DateTime?
-  aiDisclosureMadeAt    DateTime?
-  startedAt             DateTime?
-  endedAt               DateTime?
-  durationSeconds       Int?
-  transcriptText        String?      @db.Text
-  recordingStorageKey   String?
-  structuredOutcome     Json?
-  failureCode           String?
-  failureMessage        String?
-  quotes                Quote[]
-  evidence              Evidence[]
-  createdAt             DateTime     @default(now())
-  updatedAt             DateTime     @updatedAt
+  id                  String          @id @default(cuid())
+  jobId               String
+  runId               String?
+  businessId          String
+  negotiationId       String?
+  job                 Job             @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  run                 NegotiationRun? @relation(fields: [runId], references: [id], onDelete: SetNull)
+  business            Business        @relation(fields: [businessId], references: [id])
+  negotiation         Negotiation?    @relation(fields: [negotiationId], references: [id], onDelete: SetNull)
+  provider            String
+  providerCallId      String?
+  status              CallStatus      @default(QUEUED)
+  attempt             Int             @default(1)
+  locale              String          @default("en-US")
+  recordingConsentAt  DateTime?
+  aiDisclosureMadeAt  DateTime?
+  startedAt           DateTime?
+  endedAt             DateTime?
+  durationSeconds     Int?
+  transcriptText      String?         @db.Text
+  recordingStorageKey String?
+  structuredOutcome   Json?
+  failureCode         String?
+  failureMessage      String?
+  quotes              Quote[]
+  evidence            Evidence[]
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
 
   @@unique([provider, providerCallId])
   @@index([jobId, status])
+  @@index([runId, status])
   @@index([negotiationId, createdAt])
 }
 
 model Quote {
-  id                    String         @id @default(cuid())
-  jobId                 String
-  businessId            String
-  negotiationId         String?
-  callId                String?
-  job                   Job            @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  business              Business       @relation(fields: [businessId], references: [id])
-  negotiation           Negotiation?   @relation(fields: [negotiationId], references: [id], onDelete: SetNull)
-  call                  Call?          @relation(fields: [callId], references: [id], onDelete: SetNull)
-  status                QuoteStatus    @default(INITIAL)
-  pricingModel          PricingModel
-  currency              String         @default("USD")
-  totalAmountCents      Int?
-  minimumAmountCents    Int?
-  maximumAmountCents    Int?
-  originalAmountCents   Int?
-  negotiatedSavingCents Int?
-  depositAmountCents    Int?
-  estimatedHours        Decimal?       @db.Decimal(6, 2)
-  crewSize              Int?
-  validUntil            DateTime?
-  terms                 Json?
-  inclusions            Json?
-  exclusions            Json?
-  score                 Decimal?       @db.Decimal(5, 2)
-  recommendationReason  String?        @db.Text
-  items                 QuoteItem[]
-  evidence              Evidence[]
-  createdAt             DateTime       @default(now())
-  updatedAt             DateTime       @updatedAt
+  id                     String             @id @default(cuid())
+  jobId                  String
+  runId                  String?
+  businessId             String
+  negotiationId          String?
+  callId                 String?
+  job                    Job                @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  run                    NegotiationRun?    @relation(fields: [runId], references: [id], onDelete: SetNull)
+  business               Business           @relation(fields: [businessId], references: [id])
+  negotiation            Negotiation?       @relation(fields: [negotiationId], references: [id], onDelete: SetNull)
+  call                   Call?              @relation(fields: [callId], references: [id], onDelete: SetNull)
+  status                 QuoteStatus        @default(INITIAL)
+  pricingModel           PricingModel
+  estimateType           QuoteEstimateType?
+  currency               String             @default("USD")
+  totalAmountCents       Int?
+  minimumAmountCents     Int?
+  maximumAmountCents     Int?
+  originalAmountCents    Int?
+  negotiatedSavingCents  Int?
+  depositAmountCents     Int?
+  estimatedHours         Decimal?           @db.Decimal(6, 2)
+  crewSize               Int?
+  validUntil             DateTime?
+  terms                  Json?
+  inclusions             Json?
+  exclusions             Json?
+  score                  Decimal?           @db.Decimal(5, 2)
+  recommendationReason   String?            @db.Text
+  confidence             Decimal?           @db.Decimal(5, 4)
+  completeness           Decimal?           @db.Decimal(5, 4)
+  riskFlags              Json?
+  items                  QuoteItem[]
+  evidence               Evidence[]
+  bestForRecommendations Recommendation[]   @relation("BestQuote")
+  decisions              Decision[]         @relation("SelectedQuote")
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
 
   @@index([jobId, status])
+  @@index([runId, status])
   @@index([businessId, createdAt])
   @@index([negotiationId, createdAt])
 }
@@ -284,7 +399,9 @@ model QuoteItem {
   quantity         Decimal? @db.Decimal(10, 2)
   unit             String?
   unitAmountCents  Int?
-  totalAmountCents Int
+  totalAmountCents Int?
+  required         Boolean  @default(true)
+  includedInTotal  Boolean  @default(true)
   disclosed        Boolean  @default(true)
   notes            String?
   createdAt        DateTime @default(now())
@@ -293,13 +410,15 @@ model QuoteItem {
 }
 
 model Evidence {
-  id             String       @id @default(cuid())
+  id             String          @id @default(cuid())
   jobId          String
+  runId          String?
   callId         String?
   quoteId        String?
-  job            Job          @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  call           Call?        @relation(fields: [callId], references: [id], onDelete: SetNull)
-  quote          Quote?       @relation(fields: [quoteId], references: [id], onDelete: SetNull)
+  job            Job             @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  run            NegotiationRun? @relation(fields: [runId], references: [id], onDelete: SetNull)
+  call           Call?           @relation(fields: [callId], references: [id], onDelete: SetNull)
+  quote          Quote?          @relation(fields: [quoteId], references: [id], onDelete: SetNull)
   kind           EvidenceKind
   storageKey     String
   contentType    String
@@ -308,11 +427,68 @@ model Evidence {
   provider       String?
   metadata       Json?
   retentionUntil DateTime?
-  createdAt      DateTime     @default(now())
+  createdAt      DateTime        @default(now())
 
   @@index([jobId, createdAt])
+  @@index([runId, createdAt])
   @@index([callId])
   @@index([quoteId])
+}
+
+model Recommendation {
+  id                   String         @id @default(cuid())
+  runId                String         @unique
+  run                  NegotiationRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  bestQuoteId          String?
+  bestQuote            Quote?         @relation("BestQuote", fields: [bestQuoteId], references: [id], onDelete: SetNull)
+  rankedQuoteIds       Json
+  factors              Json
+  explanation          String         @db.Text
+  savingsAmountCents   Int?
+  currency             String         @default("USD")
+  policyVersion        String
+  configurationVersion String
+  decision             Decision?
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+
+  @@index([bestQuoteId])
+}
+
+model Decision {
+  id               String          @id @default(cuid())
+  runId            String          @unique
+  run              NegotiationRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+  recommendationId String?         @unique
+  recommendation   Recommendation? @relation(fields: [recommendationId], references: [id], onDelete: SetNull)
+  selectedQuoteId  String?
+  selectedQuote    Quote?          @relation("SelectedQuote", fields: [selectedQuoteId], references: [id], onDelete: SetNull)
+  outcome          DecisionOutcome
+  note             String?         @db.Text
+  decidedAt        DateTime
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  @@index([selectedQuoteId])
+}
+
+model OutboxEvent {
+  id             String    @id @default(cuid())
+  aggregateType  String
+  aggregateId    String
+  eventType      String
+  payload        Json
+  correlationId  String
+  idempotencyKey String    @unique
+  availableAt    DateTime  @default(now())
+  publishedAt    DateTime?
+  attempts       Int       @default(0)
+  lastError      String?   @db.Text
+  createdAt      DateTime  @default(now())
+
+  @@index([publishedAt, availableAt])
+  @@index([aggregateType, aggregateId])
+  @@index([correlationId])
 }
 
 model AuditEvent {
@@ -331,14 +507,14 @@ model AuditEvent {
 }
 
 model WebhookEvent {
-  id              String   @id @default(cuid())
+  id              String    @id @default(cuid())
   provider        String
   providerEventId String
   eventType       String
   jobId           String?
-  job             Job?     @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  job             Job?      @relation(fields: [jobId], references: [id], onDelete: SetNull)
   payloadHash     String
-  receivedAt      DateTime @default(now())
+  receivedAt      DateTime  @default(now())
   processedAt     DateTime?
   failureMessage  String?
 

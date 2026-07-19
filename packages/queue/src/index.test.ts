@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  createQueueJob,
   getQueueName,
   queueForJob,
   queueJobNames,
@@ -27,5 +28,31 @@ describe("queue contracts", () => {
     expect(getQueueName(queueJobNames.rankQuotes)).toBe(
       queueNames.quoteAnalysis,
     );
+  });
+
+  it("uses identifiers instead of embedding persistence records", () => {
+    const job = createQueueJob(
+      queueJobNames.discoverBusinesses,
+      {
+        jobId: "job_1",
+        limit: 3,
+        runId: "run_1",
+        searchRadiusKm: 25,
+        specificationVersionId: "specification_version_1",
+      },
+      {
+        idempotencyKey: "run_1:discover",
+        requestedAt: "2026-07-19T00:00:00.000Z",
+        traceId: "trace_1",
+      },
+    );
+
+    expect(job.payload).toEqual({
+      jobId: "job_1",
+      limit: 3,
+      runId: "run_1",
+      searchRadiusKm: 25,
+      specificationVersionId: "specification_version_1",
+    });
   });
 });

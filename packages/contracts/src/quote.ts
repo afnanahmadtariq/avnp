@@ -84,6 +84,20 @@ export const quoteTermsSchema = z
   })
   .strict();
 
+export const quoteRiskFlagSeveritySchema = z.enum([
+  "information",
+  "warning",
+  "critical",
+]);
+
+export const quoteRiskFlagSchema = z
+  .object({
+    code: z.string().trim().min(1).max(100),
+    description: z.string().trim().min(1).max(1_000),
+    severity: quoteRiskFlagSeveritySchema,
+  })
+  .strict();
+
 export const quoteSchema = z
   .object({
     id: entityIdSchema,
@@ -102,6 +116,8 @@ export const quoteSchema = z
     discount: moneySchema.optional(),
     tax: moneySchema.optional(),
     confidence: z.number().min(0).max(1),
+    completeness: z.number().min(0).max(1).optional(),
+    riskFlags: z.array(quoteRiskFlagSchema).max(100).optional(),
     terms: quoteTermsSchema.optional(),
     evidence: quoteEvidenceSchema.optional(),
     capturedAt: isoDateTimeSchema,
@@ -170,5 +186,7 @@ export type QuoteFee = z.infer<typeof quoteFeeSchema>;
 export type QuoteFeeCategory = z.infer<typeof quoteFeeCategorySchema>;
 export type QuotePriceRange = z.infer<typeof quotePriceRangeSchema>;
 export type QuotePricingModel = z.infer<typeof quotePricingModelSchema>;
+export type QuoteRiskFlag = z.infer<typeof quoteRiskFlagSchema>;
+export type QuoteRiskFlagSeverity = z.infer<typeof quoteRiskFlagSeveritySchema>;
 export type QuoteStatus = z.infer<typeof quoteStatusSchema>;
 export type QuoteTerms = z.infer<typeof quoteTermsSchema>;

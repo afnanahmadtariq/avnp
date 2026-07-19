@@ -48,7 +48,10 @@
     "db:validate": {
       "cache": false
     },
-    "db:migrate": {
+    "db:push": {
+      "cache": false
+    },
+    "db:reset": {
       "cache": false
     },
     "db:seed": {

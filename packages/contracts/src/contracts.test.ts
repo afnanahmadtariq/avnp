@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   callOutcomeSchema,
+  jobSummarySchema,
   healthResponseSchema,
   jobSpecificationSchema,
+  saveDecisionRequestSchema,
 } from "./index.js";
 
 describe("shared contracts", () => {
@@ -40,5 +42,38 @@ describe("shared contracts", () => {
     });
 
     expect(result.outcome).toBe("callback_requested");
+  });
+
+  it("accepts an API-facing job summary", () => {
+    expect(
+      jobSummarySchema.parse({
+        candidateCount: 3,
+        createdAt: "2026-07-19T00:00:00.000Z",
+        id: "job_1",
+        latestRun: {
+          id: "run_1",
+          status: "completed",
+          updatedAt: "2026-07-19T00:20:00.000Z",
+        },
+        publicId: "RLY-2048",
+        quoteCount: 3,
+        status: "completed",
+        title: "Charlotte apartment move",
+        updatedAt: "2026-07-19T00:20:00.000Z",
+        vertical: "moving",
+      }),
+    ).toMatchObject({
+      publicId: "RLY-2048",
+      title: "Charlotte apartment move",
+    });
+  });
+
+  it("requires a selected quote for a quote-selected decision", () => {
+    expect(
+      saveDecisionRequestSchema.safeParse({
+        outcome: "quote_selected",
+        selectedQuoteId: null,
+      }).success,
+    ).toBe(false);
   });
 });
