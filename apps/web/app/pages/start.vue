@@ -1,7 +1,14 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 
 import ApiFeedback from "~/components/app/ApiFeedback.vue";
+import type { JobSpecification } from "~/types/api";
+import {
+  extractionConfidenceLabel,
+  intakeFileError,
+  mergeIntakeExtraction,
+  type MovingIntakeFields,
+} from "~/utils/intake";
 import { createMovingSpecification } from "~/utils/job-specification";
 
 useSeoMeta({
@@ -10,24 +17,95 @@ useSeoMeta({
 });
 
 const router = useRouter();
-const api = useRelayApi();
 const { setCurrent } = useRequestContext();
+const intake = useLiveIntake();
 const step = ref(1);
-const intakeMethod = ref("Guided form");
+type IntakeMethod = "Guided form" | "Upload estimate" | "Voice interview";
+const intakeMethod = ref<IntakeMethod>("Guided form");
 const budget = ref("Under $2,000");
 const flexibility = ref("I can be flexible");
-const origin = ref("Rock Hill, SC");
-const destination = ref("Charlotte, NC");
-const moveDate = ref("2026-07-28");
+const origin = ref("");
+const destination = ref("");
+const moveDate = ref("");
 const homeSize = ref("2-bedroom apartment");
-const inventory = ref("26 boxes, sectional, queen bed, dining table");
-const access = ref("One flight at pickup; elevator at drop-off");
+const inventory = ref("");
+const access = ref("");
 const consent = ref(false);
 const stepHeading = ref<HTMLElement | null>(null);
 const creating = ref(false);
 const createError = ref("");
+const fileInput = ref<HTMLInputElement | null>(null);
+const fileError = ref("");
 
 const progress = computed(() => `${(step.value / 4) * 100}%`);
+const intakeBusy = computed(
+  () =>
+    intake.documentPending.value ||
+    intake.voiceActive.value ||
+    intake.voiceStatus.value === "processing",
+);
+const voiceStatusCopy = computed(() => {
+  const labels = {
+    complete: "Interview processed — review the extracted details next.",
+    connecting: "Connecting your private interview…",
+    error: "The interview needs your attention.",
+    idle: "Your microphone stays off until you start.",
+    listening:
+      intake.voiceMode.value === "speaking"
+        ? "Relay is speaking"
+        : "Relay is listening",
+    permission: "Waiting for microphone permission…",
+    processing: "Securing the transcript and extracting the move details…",
+  } as const;
+
+  return labels[intake.voiceStatus.value];
+});
+const extractionSummary = computed(() =>
+  extractionConfidenceLabel(intake.extraction.value),
+);
+
+function currentFields(): MovingIntakeFields {
+  return {
+    access: access.value,
+    budget: budget.value,
+    destination: destination.value,
+    flexibility: flexibility.value,
+    homeSize: homeSize.value,
+    inventory: inventory.value,
+    moveDate: moveDate.value,
+    origin: origin.value,
+  };
+}
+
+function currentSpecification(): JobSpecification {
+  return createMovingSpecification(currentFields());
+}
+
+function requestTitle(): string {
+  const destinationName = destination.value.split(",")[0]?.trim();
+  return destinationName ? `${destinationName} move` : "Moving request";
+}
+
+function applyExtractedFacts(): void {
+  const merged = mergeIntakeExtraction(
+    currentFields(),
+    intake.extraction.value,
+  );
+  access.value = merged.access;
+  budget.value = merged.budget;
+  destination.value = merged.destination;
+  flexibility.value = merged.flexibility;
+  homeSize.value = merged.homeSize;
+  inventory.value = merged.inventory;
+  moveDate.value = merged.moveDate;
+  origin.value = merged.origin;
+}
+
+watch(() => intake.extraction.value, applyExtractedFacts);
+watch(intakeMethod, () => {
+  fileError.value = "";
+  intake.clearError();
+});
 
 async function focusCurrentStep(): Promise<void> {
   await nextTick();
@@ -44,6 +122,29 @@ async function previous(): Promise<void> {
   await focusCurrentStep();
 }
 
+async function processDocument(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+
+  fileError.value = intakeFileError(file) ?? "";
+  if (fileError.value) {
+    input.value = "";
+    return;
+  }
+
+  await intake.uploadDocument(file, requestTitle());
+  input.value = "";
+}
+
+async function startVoiceInterview(): Promise<void> {
+  await intake.startVoiceInterview(requestTitle());
+}
+
+async function finishVoiceInterview(): Promise<void> {
+  await intake.finishVoiceInterview();
+}
+
 async function createRequest(): Promise<void> {
   if (creating.value) return;
 
@@ -51,21 +152,7 @@ async function createRequest(): Promise<void> {
   createError.value = "";
 
   try {
-    const specification = createMovingSpecification({
-      access: access.value,
-      budget: budget.value,
-      destination: destination.value,
-      flexibility: flexibility.value,
-      homeSize: homeSize.value,
-      inventory: inventory.value,
-      moveDate: moveDate.value,
-      origin: origin.value,
-    });
-    const destinationName = destination.value.split(",")[0]?.trim();
-    const job = await api.createJob({
-      specification,
-      title: destinationName ? `${destinationName} move` : "Moving request",
-    });
+    const job = await intake.saveDraft(currentSpecification(), requestTitle());
 
     setCurrent(job.publicId);
     await router.push(`/requests/${encodeURIComponent(job.publicId)}/review`);
@@ -147,10 +234,14 @@ async function createRequest(): Promise<void> {
                 ]"
                 :key="option"
                 class="choice-card"
-                :class="{ 'choice-card--selected': intakeMethod === option }"
+                :class="{
+                  'choice-card--disabled': intakeBusy,
+                  'choice-card--selected': intakeMethod === option,
+                }"
               >
                 <input
                   v-model="intakeMethod"
+                  :disabled="intakeBusy"
                   :value="option"
                   name="input-method"
                   type="radio"
@@ -166,14 +257,185 @@ async function createRequest(): Promise<void> {
                 }}</small>
               </label>
             </div>
-            <div class="brief-tip">
+
+            <div v-if="intakeMethod === 'Guided form'" class="brief-tip">
               <span aria-hidden="true">i</span>
               <p>
-                Voice interview and upload currently prefill fixed sample
-                inputs; they do not process live audio or documents. Review and
-                edit every field before confirming.
+                Best when you know the route, date, inventory, and access
+                details. You can revise every field before calls begin.
               </p>
             </div>
+
+            <section
+              v-else-if="intakeMethod === 'Upload estimate'"
+              aria-labelledby="upload-heading"
+              class="intake-panel"
+            >
+              <div class="intake-panel__copy">
+                <span aria-hidden="true" class="intake-panel__icon">↑</span>
+                <div>
+                  <h2 id="upload-heading">Extract the facts from a document</h2>
+                  <p>
+                    Add an estimate, inventory, or scope sheet. Relay reads the
+                    facts, then you verify them in the guided form.
+                  </p>
+                </div>
+              </div>
+              <input
+                ref="fileInput"
+                accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp"
+                class="sr-only"
+                type="file"
+                @change="processDocument"
+              />
+              <div class="intake-panel__actions">
+                <button
+                  class="button button--secondary"
+                  :disabled="intakeBusy"
+                  type="button"
+                  @click="fileInput?.click()"
+                >
+                  {{
+                    intake.documentPending.value
+                      ? "Reading document…"
+                      : "Choose a document"
+                  }}
+                </button>
+                <small>PDF, JPG, PNG, or WebP · up to 20 MB</small>
+              </div>
+              <p
+                v-if="fileError || intake.error.value"
+                class="intake-panel__error"
+                role="alert"
+              >
+                {{ fileError || intake.error.value }}
+              </p>
+              <div
+                v-if="intake.processedFileName.value"
+                class="intake-result"
+                role="status"
+              >
+                <span aria-hidden="true">✓</span>
+                <div>
+                  <strong>{{ intake.processedFileName.value }}</strong>
+                  <small>{{ extractionSummary }} · Details added below</small>
+                </div>
+              </div>
+              <ul
+                v-if="intake.extraction.value?.warnings?.length"
+                aria-label="Document details needing review"
+                class="intake-warnings"
+              >
+                <li
+                  v-for="warning in intake.extraction.value.warnings"
+                  :key="warning"
+                >
+                  {{ warning }}
+                </li>
+              </ul>
+            </section>
+
+            <section
+              v-else
+              aria-labelledby="voice-heading"
+              class="intake-panel"
+            >
+              <div class="intake-panel__copy">
+                <span aria-hidden="true" class="intake-panel__icon">◉</span>
+                <div>
+                  <h2 id="voice-heading">Talk through the move naturally</h2>
+                  <p>
+                    Relay asks only the missing questions. End the interview
+                    when you are ready, then verify the secured transcript’s
+                    extracted facts.
+                  </p>
+                </div>
+              </div>
+              <div class="voice-status" aria-live="polite" role="status">
+                <span
+                  aria-hidden="true"
+                  :class="{
+                    'voice-status__pulse--active': intake.voiceActive.value,
+                  }"
+                  class="voice-status__pulse"
+                />
+                <div>
+                  <strong>{{ voiceStatusCopy }}</strong>
+                  <small v-if="intake.voiceStatus.value === 'complete'">
+                    {{ extractionSummary }}
+                  </small>
+                  <small v-else-if="intake.voiceStatus.value === 'listening'">
+                    {{
+                      intake.voiceMode.value === "speaking"
+                        ? "You can interrupt at any time."
+                        : "Speak normally — pauses are okay."
+                    }}
+                  </small>
+                  <small v-else>
+                    Microphone audio is used only for this interview.
+                  </small>
+                </div>
+              </div>
+              <p
+                v-if="intake.error.value"
+                class="intake-panel__error"
+                role="alert"
+              >
+                {{ intake.error.value }}
+              </p>
+              <div class="intake-panel__actions">
+                <button
+                  v-if="
+                    !intake.voiceActive.value &&
+                    intake.voiceStatus.value !== 'processing'
+                  "
+                  class="button button--secondary"
+                  :disabled="intake.documentPending.value"
+                  type="button"
+                  @click="
+                    intake.voiceStatus.value === 'error' &&
+                    intake.voiceConversationId.value
+                      ? intake.retryVoiceProcessing()
+                      : startVoiceInterview()
+                  "
+                >
+                  {{
+                    intake.voiceStatus.value === "error" &&
+                    intake.voiceConversationId.value
+                      ? "Retry processing"
+                      : intake.voiceStatus.value === "complete"
+                        ? "Start another interview"
+                        : "Start voice interview"
+                  }}
+                </button>
+                <button
+                  v-else-if="intake.voiceStatus.value !== 'processing'"
+                  class="button button--blue"
+                  type="button"
+                  @click="finishVoiceInterview"
+                >
+                  Finish and extract details
+                </button>
+                <small v-if="intake.voiceConversationId.value">
+                  Private session connected
+                </small>
+              </div>
+              <ul
+                v-if="
+                  intake.voiceStatus.value === 'complete' &&
+                  intake.extraction.value?.warnings?.length
+                "
+                aria-label="Interview details needing review"
+                class="intake-warnings"
+              >
+                <li
+                  v-for="warning in intake.extraction.value.warnings"
+                  :key="warning"
+                >
+                  {{ warning }}
+                </li>
+              </ul>
+            </section>
           </fieldset>
 
           <fieldset v-else-if="step === 2" class="brief-step">
@@ -188,6 +450,7 @@ async function createRequest(): Promise<void> {
                 >From<input
                   v-model="origin"
                   autocomplete="address-level2"
+                  placeholder="Pickup city or full address"
                   required
               /></label>
               <span aria-hidden="true" class="location-grid__arrow">→</span>
@@ -195,6 +458,7 @@ async function createRequest(): Promise<void> {
                 >To<input
                   v-model="destination"
                   autocomplete="address-level2"
+                  placeholder="Destination city or full address"
                   required
               /></label>
             </div>
@@ -214,11 +478,17 @@ async function createRequest(): Promise<void> {
               >
               <label class="details-grid__wide"
                 ><span>Inventory summary</span
-                ><input v-model="inventory" required
+                ><input
+                  v-model="inventory"
+                  placeholder="Example: 20 boxes, sofa, queen bed"
+                  required
               /></label>
               <label class="details-grid__wide"
                 ><span>Access constraints</span
-                ><input v-model="access" required
+                ><input
+                  v-model="access"
+                  placeholder="Stairs, elevators, loading access, parking"
+                  required
               /></label>
             </div>
           </fieldset>
@@ -324,7 +594,7 @@ async function createRequest(): Promise<void> {
             <span v-else />
             <button
               class="button button--blue"
-              :disabled="creating"
+              :disabled="creating || (step === 1 && intakeBusy)"
               type="submit"
             >
               {{
@@ -493,6 +763,11 @@ async function createRequest(): Promise<void> {
     inset 0 0 0 1px var(--relay-blue),
     0 8px 20px rgb(49 87 246 / 9%);
 }
+.choice-card--disabled {
+  cursor: wait;
+  opacity: 0.64;
+  transform: none;
+}
 .choice-card input {
   clip: rect(0 0 0 0);
   height: 1px;
@@ -608,6 +883,120 @@ async function createRequest(): Promise<void> {
   line-height: 1.55;
   margin: 0;
 }
+.intake-panel {
+  background: var(--relay-surface);
+  border: 1px solid var(--relay-line);
+  border-radius: 14px;
+  display: grid;
+  gap: 16px;
+  margin-top: 18px;
+  padding: 18px;
+}
+.intake-panel__copy {
+  align-items: flex-start;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: auto 1fr;
+}
+.intake-panel__icon {
+  align-items: center;
+  background: var(--relay-blue-soft);
+  border-radius: 10px;
+  color: var(--relay-blue);
+  display: inline-flex;
+  font-size: 1rem;
+  font-weight: 700;
+  height: 34px;
+  justify-content: center;
+  width: 34px;
+}
+.intake-panel h2 {
+  font-size: var(--relay-text-control);
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  margin: 1px 0 4px;
+}
+.intake-panel p {
+  color: var(--relay-muted);
+  font-size: var(--relay-text-meta);
+  line-height: 1.55;
+  margin: 0;
+}
+.intake-panel__actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.intake-panel__actions small {
+  color: var(--relay-faint);
+  font-size: var(--relay-text-meta);
+}
+.intake-panel .intake-panel__error {
+  background: #fff5f3;
+  border: 1px solid #f1d4ce;
+  border-radius: 9px;
+  color: #9a3525;
+  padding: 10px 12px;
+}
+.intake-result,
+.voice-status {
+  align-items: center;
+  border-radius: 11px;
+  display: flex;
+  gap: 11px;
+  padding: 12px 13px;
+}
+.intake-result {
+  background: var(--relay-green-soft);
+  color: var(--relay-green);
+}
+.intake-result > span {
+  font-weight: 750;
+}
+.intake-result div,
+.voice-status div {
+  display: grid;
+  gap: 2px;
+}
+.intake-result strong,
+.voice-status strong {
+  color: var(--relay-ink);
+  font-size: var(--relay-text-meta);
+  font-weight: 650;
+}
+.intake-result small,
+.voice-status small {
+  color: var(--relay-muted);
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+.voice-status {
+  background: var(--relay-blue-soft);
+}
+.voice-status__pulse {
+  background: var(--relay-faint);
+  border: 4px solid white;
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px var(--relay-line);
+  flex: 0 0 auto;
+  height: 16px;
+  width: 16px;
+}
+.voice-status__pulse--active {
+  animation: voice-pulse 1.5s ease-in-out infinite;
+  background: var(--relay-green);
+  box-shadow: 0 0 0 1px rgb(25 145 103 / 28%);
+}
+.intake-warnings {
+  color: var(--relay-muted);
+  display: grid;
+  font-size: var(--relay-text-meta);
+  gap: 5px;
+  line-height: 1.5;
+  margin: 0;
+  padding-left: 19px;
+}
 .consent-row {
   align-items: flex-start;
   border: 1px solid var(--relay-line);
@@ -712,6 +1101,16 @@ async function createRequest(): Promise<void> {
     transform: translateY(0);
   }
 }
+@keyframes voice-pulse {
+  50% {
+    box-shadow: 0 0 0 6px rgb(25 145 103 / 12%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .voice-status__pulse--active {
+    animation: none;
+  }
+}
 @media (max-width: 1024px) {
   .brief-main {
     grid-template-columns: 1fr;
@@ -755,6 +1154,14 @@ async function createRequest(): Promise<void> {
   }
   .choice-card strong {
     grid-column: 2;
+  }
+  .intake-panel__actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .intake-panel__actions .button {
+    justify-content: center;
+    width: 100%;
   }
   .brief-review {
     grid-template-columns: 1fr;

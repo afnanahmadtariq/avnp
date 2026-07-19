@@ -68,6 +68,27 @@ export interface JobDetail extends JobSummary {
   latestRunId: string | null;
 }
 
+export interface JobSpecificationExtraction {
+  confidence?: number;
+  facts: Partial<JobSpecification> & { vertical?: "moving" };
+  sourceSummary?: string;
+  warnings?: string[];
+}
+
+export interface IntakeResult {
+  evidenceIds?: string[];
+  extraction?: JobSpecificationExtraction;
+  job: JobDetail;
+  mode?: string;
+}
+
+export interface IntakeVoiceSession {
+  available: boolean;
+  message?: string;
+  mode?: string;
+  signedUrl?: string | null;
+}
+
 export interface CandidateBusiness {
   id: string;
   name: string;
@@ -134,6 +155,10 @@ export interface RunSnapshot {
     decidedAt: string;
     quoteId: string | null;
   } | null;
+  specificationVersion?: {
+    id: string;
+    version: number;
+  };
   updatedAt: string;
 }
 

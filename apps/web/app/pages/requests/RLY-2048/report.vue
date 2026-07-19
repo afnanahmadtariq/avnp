@@ -328,7 +328,7 @@ onMounted(() => void loadReport());
         </div>
         <div class="recommendation-hero__metrics">
           <div>
-            <span>Guaranteed total</span
+            <span>Quoted total</span
             ><strong>{{ formatCurrency(recommendedOffer?.total ?? 0) }}</strong
             ><small
               >{{ formatCurrency(recommendation.savings) }} below opening
@@ -358,8 +358,8 @@ onMounted(() => void loadReport());
               >
             </header>
             <p class="report-card__intro">
-              All totals use the confirmed three-person crew and inventory.
-              Missing terms remain visible instead of being treated as zero.
+              All totals use the same confirmed moving scope. Missing terms
+              remain visible instead of being treated as zero.
             </p>
             <WorkspaceQuoteComparison
               :quotes="quotes"

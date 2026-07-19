@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 
-import ApiFeedback from "~/components/app/ApiFeedback.vue";
-import type { CandidateBusiness } from "~/types/api";
-import { useAccountIdentity } from "~/composables/useAccountIdentity";
+import ApiFeedback from "../../../components/app/ApiFeedback.vue";
+import { useAccountIdentity } from "../../../composables/useAccountIdentity";
+import type { CandidateBusiness } from "../../../types/api";
 
 useSeoMeta({ title: "Approve businesses · Relay" });
 
@@ -19,6 +19,14 @@ const discovering = ref(false);
 const starting = ref(false);
 const loadError = ref("");
 const startError = ref("");
+let discoveryPollTimer: number | undefined;
+let discoveryPollPending = false;
+
+interface CandidateResponse {
+  items: CandidateBusiness[];
+  mode?: string;
+  status?: string;
+}
 
 const selectedCount = computed(
   () => businesses.value.filter((business) => business.selected).length,
@@ -92,28 +100,96 @@ function applyCandidates(candidates: CandidateBusiness[]): void {
   }));
 }
 
+function clearDiscoveryTimer(): void {
+  if (discoveryPollTimer !== undefined) {
+    window.clearTimeout(discoveryPollTimer);
+    discoveryPollTimer = undefined;
+  }
+}
+
+function finishDiscovery(): void {
+  clearDiscoveryTimer();
+  discovering.value = false;
+}
+
+function discoveryFinished(response: CandidateResponse): boolean {
+  if (response.items.length > 0) return true;
+
+  const status = response.status?.toLowerCase();
+  return status !== undefined && status !== "discovering";
+}
+
+function scheduleDiscoveryPoll(): void {
+  clearDiscoveryTimer();
+  if (!discovering.value || document.visibilityState === "hidden") {
+    return;
+  }
+
+  discoveryPollTimer = window.setTimeout(() => {
+    void pollDiscovery();
+  }, 2_500);
+}
+
+async function pollDiscovery(): Promise<void> {
+  if (!discovering.value || discoveryPollPending) return;
+
+  discoveryPollPending = true;
+  try {
+    const response = await api.getCandidates(publicId.value);
+    applyCandidates(response.items);
+
+    if (discoveryFinished(response)) {
+      finishDiscovery();
+    } else {
+      scheduleDiscoveryPoll();
+    }
+  } catch (error: unknown) {
+    finishDiscovery();
+    loadError.value =
+      error instanceof Error
+        ? error.message
+        : "Relay could not refresh business discovery.";
+  } finally {
+    discoveryPollPending = false;
+  }
+}
+
+function handleVisibilityChange(): void {
+  if (document.visibilityState === "hidden") {
+    clearDiscoveryTimer();
+  } else if (discovering.value) {
+    void pollDiscovery();
+  }
+}
+
 async function loadBusinesses(forceDiscovery = false): Promise<void> {
+  finishDiscovery();
   loading.value = true;
   loadError.value = "";
 
   try {
     await nextTick();
-    let response = await api.getCandidates(publicId.value);
+    let response: CandidateResponse = await api.getCandidates(publicId.value);
 
     if (forceDiscovery || response.items.length === 0) {
       discovering.value = true;
-      await api.discoverBusinesses(publicId.value);
-      response = await api.getCandidates(publicId.value);
+      if (forceDiscovery || response.status?.toLowerCase() !== "discovering") {
+        response = await api.discoverBusinesses(publicId.value);
+      }
     }
 
     applyCandidates(response.items);
+    if (discovering.value) {
+      if (discoveryFinished(response)) finishDiscovery();
+      else scheduleDiscoveryPoll();
+    }
   } catch (error: unknown) {
+    finishDiscovery();
     loadError.value =
       error instanceof Error
         ? error.message
         : "Relay could not load matched businesses.";
   } finally {
-    discovering.value = false;
     loading.value = false;
   }
 }
@@ -171,7 +247,15 @@ async function startCalls(): Promise<void> {
   }
 }
 
-onMounted(loadBusinesses);
+onMounted(() => {
+  document.addEventListener("visibilitychange", handleVisibilityChange);
+  void loadBusinesses();
+});
+
+onBeforeUnmount(() => {
+  clearDiscoveryTimer();
+  document.removeEventListener("visibilitychange", handleVisibilityChange);
+});
 </script>
 
 <template>
@@ -317,9 +401,19 @@ onMounted(loadBusinesses);
             </dl>
           </article>
           <div v-if="businesses.length === 0" class="business-empty">
-            <h2>No eligible businesses yet</h2>
+            <h2>
+              {{
+                discovering
+                  ? "Finding matched businesses…"
+                  : "No eligible businesses yet"
+              }}
+            </h2>
             <p>
-              Run discovery again to find businesses for this confirmed brief.
+              {{
+                discovering
+                  ? "Relay is checking service coverage and listing evidence. You can leave this tab and return while it continues."
+                  : "Run discovery again to find businesses for this confirmed brief."
+              }}
             </p>
             <button
               class="button button--secondary"
@@ -389,8 +483,8 @@ onMounted(loadBusinesses);
             <span v-if="!starting" aria-hidden="true">→</span>
           </button>
           <small>
-            This local workspace simulates call outcomes with fixed provider
-            data; it does not place outbound calls.
+            Nothing is booked automatically. You review every quote and choose
+            the final decision.
           </small>
         </aside>
       </div>

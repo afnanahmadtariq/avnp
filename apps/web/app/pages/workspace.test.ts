@@ -176,7 +176,7 @@ afterEach(() => {
 });
 
 describe("workspace page", () => {
-  it("supports call review, pausing, quote selection, and a persisted decision", async () => {
+  it("supports call review, pausing, and quote selection while a run is active", async () => {
     const wrapper = mount(WorkspacePage, {
       global: { stubs: globalComponents },
     });
@@ -207,11 +207,35 @@ describe("workspace page", () => {
     const decisionButton = wrapper.get(".recommendation-card__action");
     await decisionButton.trigger("click");
     await flushPromises();
+    expect(decisionButton.attributes("disabled")).toBeDefined();
+    expect(api.saveDecision).not.toHaveBeenCalled();
+  });
+
+  it("persists a decision after the run finishes", async () => {
+    api.getRun.mockResolvedValueOnce({
+      ...run,
+      stage: "completed",
+      status: "completed",
+    });
+    const wrapper = mount(WorkspacePage, {
+      global: { stubs: globalComponents },
+    });
+    await flushPromises();
+
+    const decisionButton = wrapper.get(".recommendation-card__action");
+    await decisionButton.trigger("click");
+    await flushPromises();
+
     expect(api.saveDecision).toHaveBeenCalledWith("run-1", "quote-pine");
     expect(decisionButton.text()).toContain("Decision saved");
   });
 
   it("does not show a saved decision when persistence fails", async () => {
+    api.getRun.mockResolvedValueOnce({
+      ...run,
+      stage: "completed",
+      status: "completed",
+    });
     api.saveDecision.mockRejectedValueOnce(new Error("Save failed"));
     const wrapper = mount(WorkspacePage, {
       global: { stubs: globalComponents },
@@ -236,5 +260,47 @@ describe("workspace page", () => {
     expect(wrapper.text()).toContain(
       "This negotiation run belongs to a different request.",
     );
+  });
+
+  it("polls a live run and stops when the run becomes terminal", async () => {
+    const timers: Array<{ delay?: number; handler: () => void }> = [];
+    const visibilitySpy = vi
+      .spyOn(document, "visibilityState", "get")
+      .mockReturnValue("visible");
+    const timeoutSpy = vi
+      .spyOn(window, "setTimeout")
+      .mockImplementation((handler, delay) => {
+        timers.push({ delay, handler: () => handler() });
+        return {} as ReturnType<typeof window.setTimeout>;
+      });
+    const clearTimeoutSpy = vi
+      .spyOn(window, "clearTimeout")
+      .mockImplementation(() => undefined);
+    api.getRun
+      .mockResolvedValueOnce(run)
+      .mockResolvedValueOnce({ ...run, status: "completed" });
+
+    try {
+      const wrapper = mount(WorkspacePage, {
+        global: { stubs: globalComponents },
+      });
+      await flushPromises();
+
+      const refreshTimer = timers.find((timer) => timer.delay === 4_000);
+      expect(refreshTimer).toBeDefined();
+      const timerCount = timers.length;
+      refreshTimer?.handler();
+      for (let index = 0; index < 5; index += 1) await Promise.resolve();
+      await wrapper.vm.$nextTick();
+
+      expect(api.getRun).toHaveBeenCalledTimes(2);
+      expect(timers).toHaveLength(timerCount);
+      expect(wrapper.text()).toContain("View final report");
+      wrapper.unmount();
+    } finally {
+      visibilitySpy.mockRestore();
+      timeoutSpy.mockRestore();
+      clearTimeoutSpy.mockRestore();
+    }
   });
 });

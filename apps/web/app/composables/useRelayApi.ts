@@ -1,6 +1,8 @@
 import type {
   ApiErrorBody,
   CandidateBusiness,
+  IntakeResult,
+  IntakeVoiceSession,
   JobDetail,
   JobSpecification,
   JobSummary,
@@ -16,7 +18,7 @@ import type {
 import { useAuth } from "@clerk/nuxt/composables";
 
 interface CreateJobInput {
-  specification: JobSpecification;
+  specification?: JobSpecification;
   title?: string;
 }
 
@@ -77,7 +79,7 @@ export function useRelayApi() {
     try {
       const token = await clerkAuth?.getToken.value();
       return await $fetch<T>(`${baseURL}${path}`, {
-        body: options.body as Record<string, unknown> | undefined,
+        body: options.body as BodyInit | Record<string, unknown> | undefined,
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
         method: options.method ?? "GET",
       });
@@ -93,9 +95,12 @@ export function useRelayApi() {
   return {
     exportAccount: () => request<RelayAccountExport>("/account/export"),
     getCandidates: (publicId: string) =>
-      request<{ items: CandidateBusiness[] }>(
-        `/jobs/${encodeURIComponent(publicId)}/candidates`,
-      ),
+      request<{
+        items: CandidateBusiness[];
+        jobPublicId?: string;
+        mode?: string;
+        status?: string;
+      }>(`/jobs/${encodeURIComponent(publicId)}/candidates`),
     getEvents: (runId: string) =>
       request<{ items: RunEvent[]; sequence: number }>(
         `/runs/${encodeURIComponent(runId)}/events`,
@@ -111,6 +116,11 @@ export function useRelayApi() {
     getSettings: () => request<RelaySettings>("/settings"),
     createJob: (input: CreateJobInput) =>
       request<JobDetail>("/jobs", { body: input, method: "POST" }),
+    completeIntakeVoice: (publicId: string, conversationId: string) =>
+      request<IntakeResult>(
+        `/jobs/${encodeURIComponent(publicId)}/intake/voice/complete`,
+        { body: { conversationId }, method: "POST" },
+      ),
     confirmJob: (publicId: string, input: ConfirmJobInput) =>
       request<JobDetail>(`/jobs/${encodeURIComponent(publicId)}/confirm`, {
         body: input,
@@ -121,7 +131,13 @@ export function useRelayApi() {
         items: CandidateBusiness[];
         jobPublicId: string;
         mode: string;
+        status: string;
       }>(`/jobs/${encodeURIComponent(publicId)}/discovery`, { method: "POST" }),
+    createIntakeVoiceSession: (publicId: string) =>
+      request<IntakeVoiceSession>(
+        `/jobs/${encodeURIComponent(publicId)}/intake/voice/session`,
+        { method: "POST" },
+      ),
     saveDecision: (runId: string, quoteId: string) =>
       request<{ quoteId: string; saved: boolean; savedAt: string }>(
         `/runs/${encodeURIComponent(runId)}/decision`,
@@ -132,11 +148,24 @@ export function useRelayApi() {
         body: { businessIds },
         method: "POST",
       }),
-    updateJobDraft: (publicId: string, specification: JobSpecification) =>
+    updateJobDraft: (
+      publicId: string,
+      specification: JobSpecification,
+      title?: string,
+    ) =>
       request<JobDetail>(`/jobs/${encodeURIComponent(publicId)}/draft`, {
-        body: { specification },
+        body: { specification, ...(title ? { title } : {}) },
         method: "PATCH",
       }),
+    uploadIntakeDocument: (publicId: string, file: File) => {
+      const body = new FormData();
+      body.append("file", file, file.name);
+
+      return request<IntakeResult>(
+        `/jobs/${encodeURIComponent(publicId)}/intake/documents`,
+        { body, method: "POST" },
+      );
+    },
     updateProfile: (profile: RelayProfileUpdate) =>
       request<RelayProfile>("/profile", { body: profile, method: "PATCH" }),
     updateRun: (runId: string, action: "cancel" | "pause" | "resume") =>

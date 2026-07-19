@@ -19,9 +19,9 @@ import { evidencePointLabel, evidenceSupportCopy } from "../utils/evidence";
 
 useSeoMeta({
   description:
-    "Explore a realistic Relay negotiation session from confirmed brief to evidence-backed recommendation.",
+    "Follow Relay calls, evidence, offers, and the recommendation for your confirmed brief.",
   robots: "noindex, nofollow",
-  title: "Charlotte move · Relay workspace",
+  title: "Negotiation workspace · Relay",
 });
 
 const { publicId, runId, setCurrent } = useRequestContext();
@@ -37,6 +37,7 @@ const runEvents = ref<RunEvent[]>([]);
 const { decisionSaved, markDecisionSaved, selectedQuoteId, selectQuote } =
   useDecisionSelection();
 let pollTimer: number | undefined;
+let pollPending = false;
 
 function initials(name: string): string {
   return name
@@ -282,6 +283,56 @@ const runComplete = computed(() =>
     run.value?.status ?? "",
   ),
 );
+const reportReady = computed(() =>
+  ["completed", "partially_completed"].includes(run.value?.status ?? ""),
+);
+const terminalStatusLabel = computed(() => {
+  if (run.value?.status === "cancelled") return "Run cancelled";
+  if (run.value?.status === "failed") return "Run needs attention";
+  return "Report ready";
+});
+
+function clearWorkspacePoll(): void {
+  if (pollTimer !== undefined) {
+    window.clearTimeout(pollTimer);
+    pollTimer = undefined;
+  }
+}
+
+function scheduleWorkspacePoll(): void {
+  clearWorkspacePoll();
+  if (
+    !run.value ||
+    runComplete.value ||
+    document.visibilityState === "hidden"
+  ) {
+    return;
+  }
+
+  pollTimer = window.setTimeout(() => {
+    void refreshWorkspace();
+  }, 4_000);
+}
+
+async function refreshWorkspace(): Promise<void> {
+  if (pollPending || runComplete.value) return;
+
+  pollPending = true;
+  try {
+    await loadWorkspace(true);
+  } finally {
+    pollPending = false;
+    scheduleWorkspacePoll();
+  }
+}
+
+function handleVisibilityChange(): void {
+  if (document.visibilityState === "hidden") {
+    clearWorkspacePoll();
+  } else if (run.value && !runComplete.value) {
+    void refreshWorkspace();
+  }
+}
 const reportLink = computed(() => {
   const query = run.value?.id ? `?run=${encodeURIComponent(run.value.id)}` : "";
 
@@ -297,6 +348,10 @@ watch(
   },
   { immediate: true },
 );
+
+watch(runComplete, (complete) => {
+  if (complete) clearWorkspacePoll();
+});
 
 async function loadWorkspace(silent = false): Promise<void> {
   if (!silent) {
@@ -394,12 +449,13 @@ async function saveRecommendedDecision(): Promise<void> {
 }
 
 onMounted(() => {
-  void loadWorkspace();
-  pollTimer = window.setInterval(() => void loadWorkspace(true), 5_000);
+  document.addEventListener("visibilitychange", handleVisibilityChange);
+  void loadWorkspace().then(scheduleWorkspacePoll);
 });
 
 onBeforeUnmount(() => {
-  if (pollTimer) window.clearInterval(pollTimer);
+  clearWorkspacePoll();
+  document.removeEventListener("visibilitychange", handleVisibilityChange);
 });
 
 function badgeTone(
@@ -431,14 +487,14 @@ function badgeTone(
         </div>
         <div class="session-heading__actions">
           <NuxtLink
-            v-if="runComplete"
+            v-if="reportReady"
             class="button button--blue"
             :to="reportLink"
           >
             View final report <span aria-hidden="true">→</span>
           </NuxtLink>
           <button
-            v-else
+            v-else-if="!runComplete"
             :aria-pressed="callsPaused"
             class="button button--secondary"
             :disabled="controlPending"
@@ -457,6 +513,9 @@ function badgeTone(
                   : "Pause calls"
             }}
           </button>
+          <NuxtLink v-else class="button button--secondary" to="/dashboard">
+            Return to requests <span aria-hidden="true">→</span>
+          </NuxtLink>
         </div>
       </section>
 
@@ -468,65 +527,95 @@ function badgeTone(
         <div class="stage-card__topline">
           <div>
             <StatusBadge
-              :tone="runComplete ? 'success' : callsPaused ? 'warning' : 'live'"
+              :tone="
+                reportReady
+                  ? 'success'
+                  : runComplete || callsPaused
+                    ? 'warning'
+                    : 'live'
+              "
             >
               {{
                 runComplete
-                  ? "Report ready"
+                  ? terminalStatusLabel
                   : callsPaused
                     ? "Calls paused"
                     : "Negotiating now"
               }}
             </StatusBadge>
             <span>{{
-              runComplete ? "All outcomes saved" : "In progress"
+              reportReady
+                ? "All outcomes saved"
+                : runComplete
+                  ? "Run ended"
+                  : "In progress"
             }}</span>
           </div>
-          <strong>{{ runComplete ? "4" : "3" }} of 4 stages complete</strong>
+          <strong>{{
+            reportReady
+              ? "4 of 4 stages complete"
+              : runComplete
+                ? "Run ended before decision"
+                : "3 of 4 stages in progress"
+          }}</strong>
         </div>
         <ol class="stage-track">
           <li class="stage-track__item stage-track__item--complete">
             <span aria-hidden="true">✓</span>
             <div>
               <strong>Brief confirmed</strong>
-              <small>12:18 PM</small>
+              <small
+                >Version {{ run.specificationVersion?.version ?? 1 }}</small
+              >
             </div>
           </li>
           <li class="stage-track__item stage-track__item--complete">
             <span aria-hidden="true">✓</span>
             <div>
               <strong>Businesses found</strong>
-              <small>12:24 PM</small>
+              <small>{{ negotiations.length }} approved businesses</small>
             </div>
           </li>
           <li
             class="stage-track__item"
             :class="
-              runComplete
+              reportReady
                 ? 'stage-track__item--complete'
-                : 'stage-track__item--current'
+                : runComplete
+                  ? ''
+                  : 'stage-track__item--current'
             "
           >
-            <span aria-hidden="true">{{ runComplete ? "✓" : "3" }}</span>
+            <span aria-hidden="true">{{
+              reportReady ? "✓" : runComplete ? "!" : "3"
+            }}</span>
             <div>
               <strong>Negotiating</strong>
               <small>{{
-                runComplete
+                reportReady
                   ? `${completedCalls} calls complete`
-                  : callsPaused
-                    ? "Calls paused"
-                    : "Calls active"
+                  : runComplete
+                    ? `${completedCalls} calls completed before the run ended`
+                    : callsPaused
+                      ? "Calls paused"
+                      : "Calls active"
               }}</small>
             </div>
           </li>
           <li
             class="stage-track__item"
-            :class="{ 'stage-track__item--current': runComplete }"
+            :class="{ 'stage-track__item--complete': reportReady }"
           >
-            <span aria-hidden="true">{{ runComplete ? "✓" : "4" }}</span>
+            <span aria-hidden="true">{{ reportReady ? "✓" : "4" }}</span>
             <div>
               <strong>Decision ready</strong>
-              <small>{{ runComplete ? "Ready to review" : "Updating" }}</small>
+              <small>{{
+                reportReady
+                  ? "Ready to review"
+                  : runComplete
+                    ? "Not available"
+                    : "Updating"
+              }}</small>
             </div>
           </li>
         </ol>
@@ -554,11 +643,13 @@ function badgeTone(
           >
           <small>
             {{
-              runComplete
+              reportReady
                 ? "Every call outcome is saved"
-                : callsPaused
-                  ? "Active calls are paused"
-                  : "Relay is following up live"
+                : runComplete
+                  ? "Saved outcomes remain available"
+                  : callsPaused
+                    ? "Active calls are paused"
+                    : "Relay is following up live"
             }}
           </small>
         </article>
@@ -788,8 +879,8 @@ function badgeTone(
               </span>
             </summary>
             <p class="panel__intro">
-              Every quote uses the confirmed three-person crew and inventory.
-              Select one to inspect the recommendation detail.
+              Every quote uses the same confirmed moving scope. Select one to
+              inspect the recommendation detail.
             </p>
             <WorkspaceQuoteComparison
               :quotes="quotes"
@@ -800,10 +891,14 @@ function badgeTone(
         </div>
 
         <aside class="workspace-secondary">
-          <section id="recommendation" class="recommendation-card card">
+          <section
+            v-if="quotes.length > 0"
+            id="recommendation"
+            class="recommendation-card card"
+          >
             <div class="recommendation-card__signal">
               <span aria-hidden="true">✓</span>
-              Relay recommendation
+              {{ reportReady ? "Relay recommendation" : "Current comparison" }}
             </div>
             <h2>{{ recommendation.headline }}</h2>
             <p>
@@ -813,7 +908,7 @@ function badgeTone(
 
             <div class="recommendation-card__price">
               <div>
-                <span>Guaranteed total</span>
+                <span>Quoted total</span>
                 <strong class="mono-number">
                   {{ formatCurrency(recommendedQuote?.total ?? 0) }}
                 </strong>
@@ -867,23 +962,41 @@ function badgeTone(
 
             <button
               class="button button--blue recommendation-card__action"
-              :disabled="decisionPending"
+              :disabled="decisionPending || !reportReady"
               type="button"
               @click="saveRecommendedDecision"
             >
               {{
-                decisionPending
-                  ? "Saving decision…"
-                  : decisionSaved
-                    ? "Decision saved"
-                    : `Choose ${recommendedQuote?.company ?? "recommended offer"}`
+                !reportReady
+                  ? "Available when calls finish"
+                  : decisionPending
+                    ? "Saving decision…"
+                    : decisionSaved
+                      ? "Decision saved"
+                      : `Choose ${recommendedQuote?.company ?? "recommended offer"}`
               }}
               <span aria-hidden="true">{{
                 decisionPending ? "" : decisionSaved ? "✓" : "→"
               }}</span>
             </button>
             <p class="recommendation-card__fine-print">
-              Relay saves your choice. Booking remains under your control.
+              {{
+                reportReady
+                  ? "Relay saves your choice. Booking remains under your control."
+                  : "The comparison can change until every call outcome is processed."
+              }}
+            </p>
+          </section>
+
+          <section v-else class="recommendation-card card">
+            <div class="recommendation-card__signal">
+              <span aria-hidden="true">…</span>
+              Comparison pending
+            </div>
+            <h2>No comparable quote yet.</h2>
+            <p>
+              Relay will show the current evidence-backed comparison here as
+              businesses complete their calls.
             </p>
           </section>
 

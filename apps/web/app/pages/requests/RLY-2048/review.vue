@@ -376,8 +376,8 @@ onMounted(loadJob);
                   /></svg
               ></span>
               <div>
-                <strong>Guided brief</strong
-                ><small>Structured moving details</small>
+                <strong>Reviewed brief</strong
+                ><small>Guided, document, or voice details</small>
               </div>
               <StatusBadge :dot="false" tone="success">Loaded</StatusBadge>
             </div>
