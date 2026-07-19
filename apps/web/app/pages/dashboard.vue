@@ -1,33 +1,24 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 
+import ApiFeedback from "~/components/app/ApiFeedback.vue";
+import { useAccountIdentity } from "~/composables/useAccountIdentity";
 import type { JobSummary } from "~/types/api";
 import { formatCurrency } from "~/utils/currency";
 
 useSeoMeta({ title: "Dashboard · Relay" });
 
 const api = useRelayApi();
+const { firstName, isLoaded: accountIdentityLoaded } = useAccountIdentity();
 const { setCurrent } = useRequestContext();
 const jobs = ref<JobSummary[]>([]);
 const pending = ref(true);
 const loadError = ref("");
-const usingFixtureFallback = ref(false);
-
-const fixtureFallback: JobSummary = {
-  bestOfferCents: 184_000,
-  movingDate: "2026-07-28",
-  nextAction: "follow_run",
-  publicId: "RLY-2048",
-  route: {
-    destination: "Charlotte, NC",
-    pickup: "Rock Hill, SC",
-  },
-  savingsCents: 37_000,
-  stage: "calling",
-  status: "negotiating",
-  title: "Charlotte apartment move",
-  updatedAt: "2026-07-19T06:00:00.000Z",
-};
+const accountGreeting = computed(() =>
+  accountIdentityLoaded.value
+    ? `Welcome back, ${firstName.value}.`
+    : "Welcome back.",
+);
 
 const activeJobs = computed(
   () =>
@@ -132,7 +123,6 @@ function updatedLabel(value: string): string {
 async function loadJobs(): Promise<void> {
   pending.value = true;
   loadError.value = "";
-  usingFixtureFallback.value = false;
 
   try {
     const response = await api.getJobs();
@@ -142,8 +132,7 @@ async function loadJobs(): Promise<void> {
       error instanceof Error
         ? error.message
         : "Relay could not load your requests.";
-    jobs.value = [fixtureFallback];
-    usingFixtureFallback.value = true;
+    jobs.value = [];
   } finally {
     pending.value = false;
   }
@@ -162,7 +151,7 @@ onMounted(loadJobs);
       <header class="product-page-header">
         <div>
           <p class="product-kicker">Your Relay workspace</p>
-          <h1>Good morning, Afnan.</h1>
+          <h1>{{ accountGreeting }}</h1>
           <p>Keep an eye on your active negotiation or start something new.</p>
         </div>
         <NuxtLink class="button button--blue" to="/start"
@@ -172,7 +161,11 @@ onMounted(loadJobs);
 
       <ApiFeedback :message="loadError" :pending="pending" @retry="loadJobs" />
 
-      <section v-if="!pending" aria-label="Relay summary" class="summary-grid">
+      <section
+        v-if="!pending && !loadError"
+        aria-label="Relay summary"
+        class="summary-grid"
+      >
         <article class="summary-card">
           <span>Active requests</span><strong>{{ activeJobs }}</strong
           ><small>{{ jobs.length }} total requests</small>
@@ -188,16 +181,13 @@ onMounted(loadJobs);
         </article>
       </section>
 
-      <section v-if="!pending" class="dashboard-section">
+      <section v-if="!pending && !loadError" class="dashboard-section">
         <div class="dashboard-section__heading">
           <div>
             <h2>Your requests</h2>
             <p>Every request from intake to final decision.</p>
           </div>
-          <StatusBadge v-if="usingFixtureFallback" :dot="false" tone="warning"
-            >Preview data</StatusBadge
-          >
-          <StatusBadge v-else :dot="false" tone="blue"
+          <StatusBadge :dot="false" tone="blue"
             >{{ activeJobs }} active</StatusBadge
           >
         </div>

@@ -3,6 +3,7 @@ import type { RelayProfile, RelayProfileUpdate } from "~/types/api";
 
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
+import { useAccountIdentity } from "../composables/useAccountIdentity";
 import { useRelayApi } from "../composables/useRelayApi";
 
 useSeoMeta({ title: "Profile · Relay" });
@@ -15,6 +16,7 @@ const supportedTimezones = [
 ] as const;
 
 const api = useRelayApi();
+const { syncAccountIdentity } = useAccountIdentity();
 const isLoaded = ref(false);
 const isLoading = ref(true);
 const isSaving = ref(false);
@@ -108,6 +110,7 @@ async function loadProfile(): Promise<void> {
 
   try {
     profile.value = normalizeProfile(await api.getProfile());
+    syncAccountIdentity(profile.value);
     isLoaded.value = true;
   } catch (error: unknown) {
     isLoaded.value = false;
@@ -177,6 +180,7 @@ async function saveProfile(): Promise<void> {
     profile.value = normalizeProfile(
       await api.updateProfile(normalizedProfile),
     );
+    syncAccountIdentity(profile.value);
     saved.value = true;
     saveFeedback.value = "Profile saved to Relay.";
     saveFeedbackTimeout = window.setTimeout(() => {
@@ -408,10 +412,10 @@ async function saveProfile(): Promise<void> {
               </span>
               <span aria-hidden="true">→</span>
             </NuxtLink>
-            <NuxtLink to="/settings#security">
+            <NuxtLink to="/settings#access">
               <span>
-                <strong>Security</strong>
-                <small>Review active access</small>
+                <strong>Workspace access</strong>
+                <small>Local access and sign-in status</small>
               </span>
               <span aria-hidden="true">→</span>
             </NuxtLink>
@@ -425,7 +429,7 @@ async function saveProfile(): Promise<void> {
 <style scoped>
 .account-page {
   margin: 0 auto;
-  max-width: var(--relay-width-narrow);
+  max-width: var(--relay-width-standard);
   padding: var(--relay-space-10) var(--relay-page-gutter) var(--relay-space-24);
 }
 .account-header {
@@ -591,12 +595,14 @@ async function saveProfile(): Promise<void> {
   display: grid;
   gap: 15px;
   grid-template-columns: 1fr 1fr;
+  min-width: 0;
 }
 .settings-fields label {
   color: var(--relay-faint);
   display: grid;
   font-size: var(--relay-text-meta);
   gap: 7px;
+  min-width: 0;
 }
 .settings-fields input,
 .settings-fields select {
@@ -605,7 +611,9 @@ async function saveProfile(): Promise<void> {
   border-radius: 9px;
   font-size: var(--relay-text-control);
   min-height: 44px;
+  min-width: 0;
   padding: 0 10px;
+  width: 100%;
 }
 .settings-fields input:focus,
 .settings-fields select:focus {

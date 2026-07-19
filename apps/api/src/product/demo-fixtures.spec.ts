@@ -41,6 +41,26 @@ describe("deterministic product fixtures", () => {
     ).toBe(true);
   });
 
+  it("provides customer-ready quote terms and evidence transcripts", () => {
+    expect(
+      demoMarket.every(
+        (offer) =>
+          offer.arrivalWindow.length > 0 &&
+          offer.cancellationPolicy.length > 0 &&
+          offer.crewSize > 0 &&
+          offer.depositCents > 0 &&
+          offer.depositCents < offer.currentOfferCents &&
+          offer.depositPolicy.length > 0 &&
+          offer.estimatedDuration.length > 0,
+      ),
+    ).toBe(true);
+    expect(
+      demoMarket.every(
+        (offer) => !/\b(?:deterministic|fixture)\b/i.test(offer.transcript),
+      ),
+    ).toBe(true);
+  });
+
   it("pins stable identifiers for every seeded call outcome", () => {
     expect(DEMO_RUN_ID).toBe("demo-run");
     expect(demoRecordIds.calls).toHaveLength(demoBusinesses.length);

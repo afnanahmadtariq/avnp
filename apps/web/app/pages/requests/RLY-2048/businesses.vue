@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from "vue";
 
+import ApiFeedback from "~/components/app/ApiFeedback.vue";
 import type { CandidateBusiness } from "~/types/api";
+import { useAccountIdentity } from "~/composables/useAccountIdentity";
 
 useSeoMeta({ title: "Approve businesses · Relay" });
 
 const router = useRouter();
 const api = useRelayApi();
+const { representedAs } = useAccountIdentity();
 const { publicId, setCurrent } = useRequestContext();
 const sortBy = ref<"match" | "rating" | "distance">("match");
 const expandedBusiness = ref<string | null>(null);
@@ -345,7 +348,9 @@ onMounted(loadBusinesses);
                 <span aria-hidden="true">1</span>
                 <div>
                   <strong>Confirm identity</strong
-                  ><small>Relay states it represents Afnan Tariq.</small>
+                  ><small
+                    >Relay states it represents {{ representedAs }}.</small
+                  >
                 </div>
               </li>
               <li>
@@ -383,10 +388,10 @@ onMounted(loadBusinesses);
             }}
             <span v-if="!starting" aria-hidden="true">→</span>
           </button>
-          <small
-            >Demo mode uses deterministic fixtures and never places real
-            calls.</small
-          >
+          <small>
+            This local workspace simulates call outcomes with fixed provider
+            data; it does not place outbound calls.
+          </small>
         </aside>
       </div>
     </main>

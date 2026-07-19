@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from "vue";
 
+import ApiFeedback from "~/components/app/ApiFeedback.vue";
 import type { JobDetail } from "~/types/api";
 import { formatCurrency } from "~/utils/currency";
 import {

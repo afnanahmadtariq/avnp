@@ -6,16 +6,7 @@ import WorkspaceQuoteComparison from "../components/workspace/QuoteComparison.vu
 import { useRelayApi } from "../composables/useRelayApi";
 import { useRequestContext } from "../composables/useRequestContext";
 import { useDecisionSelection } from "../composables/useDecisionSelection";
-import {
-  moveBrief as demoMoveBrief,
-  negotiations as demoNegotiations,
-  quotes as demoQuotes,
-  recommendation as demoRecommendation,
-  sessionActivity as demoSessionActivity,
-  type Negotiation,
-  type NegotiationTone,
-  type Quote,
-} from "../data/demo";
+import type { Negotiation, NegotiationTone, Quote } from "../data/demo";
 import type {
   JobDetail,
   RunCall,
@@ -24,6 +15,7 @@ import type {
   RunSnapshot,
 } from "../types/api";
 import { formatCurrency } from "../utils/currency";
+import { evidencePointLabel, evidenceSupportCopy } from "../utils/evidence";
 
 useSeoMeta({
   description:
@@ -33,10 +25,10 @@ useSeoMeta({
 });
 
 const { publicId, runId, setCurrent } = useRequestContext();
-const activeNegotiationId = ref(demoNegotiations[0]?.id ?? "");
+const activeNegotiationId = ref("");
 const callsPaused = ref(false);
 const apiError = ref("");
-const apiPending = ref(false);
+const apiPending = ref(true);
 const controlPending = ref(false);
 const decisionPending = ref(false);
 const job = ref<JobDetail>();
@@ -120,8 +112,8 @@ function mapCall(call: RunCall): Negotiation {
     evidence: call.evidence.map((item, index) => ({
       id: `${call.id}-evidence-${index}`,
       label: item,
-      detail: "Persisted by Relay for this negotiation run.",
-      source: "Deterministic call evidence",
+      detail: "Saved with this negotiation for review.",
+      source: "Verified call record",
     })),
   };
 }
@@ -132,14 +124,14 @@ function mapQuote(quote: RunQuote, recommendedQuoteId?: string): Quote {
     company: quote.businessName,
     total: quote.totalCents / 100,
     initialTotal: (quote.originalTotalCents ?? quote.totalCents) / 100,
-    rating: 0,
-    reviewCount: 0,
+    rating: quote.rating ?? 0,
+    reviewCount: quote.reviewCount ?? 0,
     arrival: quote.arrivalWindow ?? "Confirmed with business",
     deposit:
       quote.depositCents === undefined
         ? "Not confirmed"
         : `${Math.round((quote.depositCents / quote.totalCents) * 100)}%`,
-    duration: "Scope confirmed",
+    duration: quote.estimatedDuration ?? "Confirmed scope",
     included:
       quote.inclusions.length > 0
         ? quote.inclusions
@@ -156,9 +148,18 @@ const moveBrief = computed(() => {
 
   if (!detail) {
     return {
-      ...demoMoveBrief,
-      destination: "Charlotte, NC",
-      pickup: "Rock Hill, SC",
+      access: "",
+      budget: 0,
+      date: "",
+      destination: "",
+      home: "",
+      id: publicId.value,
+      inventory: "",
+      notes: "",
+      pickup: "",
+      route: "",
+      title: "",
+      window: "",
     };
   }
 
@@ -186,7 +187,7 @@ const moveBrief = computed(() => {
 });
 
 const negotiations = computed<Negotiation[]>(() =>
-  run.value?.calls.length ? run.value.calls.map(mapCall) : demoNegotiations,
+  run.value?.calls.length ? run.value.calls.map(mapCall) : [],
 );
 
 const recommendationQuoteId = computed(() => {
@@ -201,7 +202,7 @@ const quotes = computed<Quote[]>(() =>
     ? run.value.quotes.map((quote) =>
         mapQuote(quote, recommendationQuoteId.value),
       )
-    : demoQuotes,
+    : [],
 );
 
 const recommendation = computed(() => {
@@ -209,7 +210,15 @@ const recommendation = computed(() => {
     (candidate) => candidate.id === recommendationQuoteId.value,
   );
 
-  if (!run.value || !quote) return demoRecommendation;
+  if (!run.value || !quote) {
+    return {
+      confidence: 0,
+      headline: "",
+      quoteId: "",
+      rationale: [] as string[],
+      savings: 0,
+    };
+  }
 
   return {
     quoteId: quote.id,
@@ -218,7 +227,7 @@ const recommendation = computed(() => {
     headline: `${quote.company} is the strongest verified value`,
     rationale: [
       "The confirmed scope is consistent across businesses",
-      `${quote.evidenceCount} evidence points support this offer`,
+      evidenceSupportCopy(quote.evidenceCount, "this offer"),
       "Unknown fees remain visible rather than becoming zero",
       "The recommendation uses price, completeness, confidence, and risk",
     ],
@@ -235,7 +244,7 @@ const sessionActivity = computed(() =>
         label: event.message,
         company: event.callId ? "Call update" : "Relay",
       }))
-    : demoSessionActivity,
+    : [],
 );
 
 const activeNegotiation = computed(
@@ -290,7 +299,12 @@ watch(
 );
 
 async function loadWorkspace(silent = false): Promise<void> {
-  if (!silent) apiPending.value = true;
+  if (!silent) {
+    apiPending.value = true;
+    job.value = undefined;
+    run.value = undefined;
+    runEvents.value = [];
+  }
   apiError.value = "";
 
   try {
@@ -400,7 +414,13 @@ function badgeTone(
 <template>
   <AppShell>
     <main id="main-content" class="workspace-main">
-      <section class="session-heading">
+      <ApiFeedback
+        :message="apiError"
+        :pending="apiPending"
+        @retry="loadWorkspace"
+      />
+
+      <section v-if="job && run" class="session-heading">
         <div>
           <div class="session-heading__crumbs">
             <span>Moves</span><span aria-hidden="true">/</span>
@@ -440,13 +460,11 @@ function badgeTone(
         </div>
       </section>
 
-      <ApiFeedback
-        :message="apiError"
-        :pending="apiPending"
-        @retry="loadWorkspace"
-      />
-
-      <section aria-label="Negotiation progress" class="stage-card card">
+      <section
+        v-if="job && run"
+        aria-label="Negotiation progress"
+        class="stage-card card"
+      >
         <div class="stage-card__topline">
           <div>
             <StatusBadge
@@ -514,7 +532,11 @@ function badgeTone(
         </ol>
       </section>
 
-      <section aria-label="Session metrics" class="metric-grid">
+      <section
+        v-if="job && run"
+        aria-label="Session metrics"
+        class="metric-grid"
+      >
         <article class="metric-card card">
           <span>Best current offer</span>
           <strong class="mono-number">{{
@@ -547,7 +569,7 @@ function badgeTone(
         </article>
       </section>
 
-      <div class="workspace-content-grid">
+      <div v-if="job && run" class="workspace-content-grid">
         <div class="workspace-primary">
           <details id="brief" class="panel panel--summary card">
             <summary class="panel__header">
@@ -881,7 +903,13 @@ function badgeTone(
               </div>
               <div>
                 <dt>Evidence</dt>
-                <dd>{{ selectedQuote.evidenceCount }} verified points</dd>
+                <dd>
+                  {{
+                    evidencePointLabel(selectedQuote.evidenceCount, {
+                      verified: true,
+                    })
+                  }}
+                </dd>
               </div>
             </dl>
             <details v-if="selectedQuote" class="fee-breakdown">

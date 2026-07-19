@@ -106,6 +106,9 @@ export interface RunQuote {
   score?: number;
   depositCents?: number;
   arrivalWindow?: string;
+  estimatedDuration?: string;
+  rating?: number;
+  reviewCount?: number;
   inclusions: string[];
   riskFlags: string[];
   evidenceCount: number;

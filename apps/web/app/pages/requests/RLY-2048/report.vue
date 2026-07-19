@@ -5,13 +5,13 @@ import WorkspaceQuoteComparison from "../../../components/workspace/QuoteCompari
 import { useDecisionSelection } from "../../../composables/useDecisionSelection";
 import { useRelayApi } from "../../../composables/useRelayApi";
 import { useRequestContext } from "../../../composables/useRequestContext";
-import {
-  quotes as demoQuotes,
-  recommendation as demoRecommendation,
-  type Quote,
-} from "../../../data/demo";
+import type { Quote } from "../../../data/demo";
 import type { RankedOffer, RunReport } from "../../../types/api";
 import { formatCurrency } from "../../../utils/currency";
+import {
+  evidencePointLabel,
+  evidenceSupportCopy,
+} from "../../../utils/evidence";
 
 useSeoMeta({ title: "Final report · Relay" });
 
@@ -25,7 +25,7 @@ const {
 const exportStatus = ref("");
 const scoringPolicyOpen = ref(false);
 const apiError = ref("");
-const apiPending = ref(false);
+const apiPending = ref(true);
 const decisionPending = ref(false);
 const apiReport = ref<RunReport>();
 
@@ -35,14 +35,14 @@ function mapRankedOffer(offer: RankedOffer): Quote {
     company: offer.businessName,
     total: offer.totalCents / 100,
     initialTotal: (offer.originalTotalCents ?? offer.totalCents) / 100,
-    rating: 0,
-    reviewCount: 0,
+    rating: offer.rating ?? 0,
+    reviewCount: offer.reviewCount ?? 0,
     arrival: offer.arrivalWindow ?? "Confirmed with business",
     deposit:
       offer.depositCents === undefined
         ? "Not confirmed"
         : `${Math.round((offer.depositCents / offer.totalCents) * 100)}%`,
-    duration: "Confirmed scope",
+    duration: offer.estimatedDuration ?? "Confirmed scope",
     included:
       offer.inclusions.length > 0
         ? offer.inclusions
@@ -59,13 +59,21 @@ function mapRankedOffer(offer: RankedOffer): Quote {
 const quotes = computed<Quote[]>(() =>
   apiReport.value?.rankedOffers.length
     ? apiReport.value.rankedOffers.map(mapRankedOffer)
-    : demoQuotes,
+    : [],
 );
 
 const recommendation = computed(() => {
   const result = apiReport.value?.recommendation;
 
-  if (!result) return demoRecommendation;
+  if (!result) {
+    return {
+      confidence: 0,
+      headline: "",
+      quoteId: "",
+      rationale: [] as string[],
+      savings: 0,
+    };
+  }
 
   return {
     quoteId: result.quoteId,
@@ -158,6 +166,7 @@ const reportExport = computed(() => ({
 async function loadReport(): Promise<void> {
   apiPending.value = true;
   apiError.value = "";
+  apiReport.value = undefined;
 
   try {
     const api = useRelayApi();
@@ -246,7 +255,13 @@ onMounted(() => void loadReport());
 <template>
   <AppShell>
     <main id="main-content" class="report-page">
-      <header class="report-header">
+      <ApiFeedback
+        :message="apiError"
+        :pending="apiPending"
+        @retry="loadReport"
+      />
+
+      <header v-if="apiReport" class="report-header">
         <div>
           <div class="report-crumbs">
             <NuxtLink to="/dashboard">Requests</NuxtLink><span>/</span
@@ -280,13 +295,7 @@ onMounted(() => void loadReport());
         </div>
       </header>
 
-      <ApiFeedback
-        :message="apiError"
-        :pending="apiPending"
-        @retry="loadReport"
-      />
-
-      <section class="recommendation-hero">
+      <section v-if="apiReport" class="recommendation-hero">
         <div class="recommendation-hero__main">
           <div class="verified-label">
             <span aria-hidden="true">✓</span> Relay recommendation
@@ -329,12 +338,14 @@ onMounted(() => void loadReport());
           <div>
             <span>Confidence</span
             ><strong>{{ recommendation.confidence }}%</strong
-            ><small>{{ evidenceCount }} verified evidence points</small>
+            ><small>{{
+              evidencePointLabel(evidenceCount, { verified: true })
+            }}</small>
           </div>
         </div>
       </section>
 
-      <div class="report-layout">
+      <div v-if="apiReport" class="report-layout">
         <div class="report-primary">
           <section class="report-card">
             <header>
@@ -397,7 +408,13 @@ onMounted(() => void loadReport());
                 </div>
                 <div>
                   <dt>Evidence</dt>
-                  <dd>{{ selectedOffer.evidenceCount }} verified points</dd>
+                  <dd>
+                    {{
+                      evidencePointLabel(selectedOffer.evidenceCount, {
+                        verified: true,
+                      })
+                    }}
+                  </dd>
                 </div>
               </dl>
               <div class="selected-offer-review__scope">
@@ -453,8 +470,13 @@ onMounted(() => void loadReport());
                 <div>
                   <h3>Evidence quality</h3>
                   <p>
-                    {{ recommendedOffer?.evidenceCount }} verified evidence
-                    points support the recommended terms.
+                    {{
+                      evidenceSupportCopy(
+                        recommendedOffer?.evidenceCount ?? 0,
+                        "the recommended terms.",
+                        { verified: true },
+                      )
+                    }}
                   </p>
                 </div>
                 <strong>High</strong>
@@ -568,7 +590,9 @@ onMounted(() => void loadReport());
             <header>
               <div>
                 <span>Evidence</span>
-                <h2>{{ evidenceCount }} verified points</h2>
+                <h2>
+                  {{ evidencePointLabel(evidenceCount, { verified: true }) }}
+                </h2>
               </div>
             </header>
             <ul>

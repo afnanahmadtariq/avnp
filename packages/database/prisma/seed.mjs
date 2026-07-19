@@ -57,7 +57,8 @@ const specification = {
     { name: "Moving boxes", quantity: 24 },
   ],
   movingDate: "2026-08-15",
-  notes: "Deterministic local demo request. No real customer data.",
+  notes:
+    "Use the reserved loading bay at pickup. The destination elevator is booked from 9:00 AM to noon; wardrobe boxes should be included.",
   packingPreference: "partial",
   pickupAddress: {
     city: "Charlotte",
@@ -264,7 +265,7 @@ async function seed() {
         status: "COMPLETED",
         structuredOutcome: { outcome: "quote_received", quoteId: ids.quote },
         transcriptText:
-          "Deterministic fixture transcript for Pine & Co. Moving.",
+          "Relay: If we accept your earliest Saturday window, can you improve the all-in price?\nBusiness: I can remove the fuel surcharge and reduce labor. The guaranteed total is $1,840.\nRelay: Please confirm stairs, mileage, and wardrobe boxes are included.\nBusiness: Confirmed, with a three-person crew arriving between 8:00 and 9:00 AM.",
       },
       create: {
         aiDisclosureMadeAt: new Date("2026-07-19T10:04:00.000Z"),
@@ -281,7 +282,7 @@ async function seed() {
         status: "COMPLETED",
         structuredOutcome: { outcome: "quote_received", quoteId: ids.quote },
         transcriptText:
-          "Deterministic fixture transcript for Pine & Co. Moving.",
+          "Relay: If we accept your earliest Saturday window, can you improve the all-in price?\nBusiness: I can remove the fuel surcharge and reduce labor. The guaranteed total is $1,840.\nRelay: Please confirm stairs, mileage, and wardrobe boxes are included.\nBusiness: Confirmed, with a three-person crew arriving between 8:00 and 9:00 AM.",
       },
     });
 
@@ -321,14 +322,26 @@ async function seed() {
         callId: ids.call,
         completeness: "1.0",
         confidence: "0.96",
+        depositAmountCents: 36800,
         estimateType: "BINDING",
         negotiatedSavingCents: 37000,
         negotiationId: ids.negotiation,
         originalAmountCents: 221000,
+        recommendationReason:
+          "Lowest complete binding offer with confirmed arrival, deposit, and included scope.",
         riskFlags: [],
         runId: ids.run,
         score: "92.50",
         status: "FINAL",
+        terms: {
+          arrivalWindow: "8:00–9:00 AM",
+          cancellationPolicy:
+            "Free cancellation up to 48 hours before arrival; the deposit can transfer once with 24 hours' notice.",
+          crewSize: 3,
+          depositPolicy: "20% due when booked",
+          estimatedDuration: "5–6 hours",
+          packingIncluded: true,
+        },
         totalAmountCents: 184000,
       },
       create: {
@@ -337,6 +350,7 @@ async function seed() {
         completeness: "1.0",
         confidence: "0.96",
         currency: "USD",
+        depositAmountCents: 36800,
         estimateType: "BINDING",
         id: ids.quote,
         jobId: ids.job,
@@ -345,13 +359,18 @@ async function seed() {
         originalAmountCents: 221000,
         pricingModel: "FIXED",
         recommendationReason:
-          "Best complete evidenced value in the deterministic demo.",
+          "Lowest complete binding offer with confirmed arrival, deposit, and included scope.",
         riskFlags: [],
         runId: ids.run,
         score: "92.50",
         status: "FINAL",
         terms: {
-          cancellationPolicy: "Fixture cancellation terms",
+          arrivalWindow: "8:00–9:00 AM",
+          cancellationPolicy:
+            "Free cancellation up to 48 hours before arrival; the deposit can transfer once with 24 hours' notice.",
+          crewSize: 3,
+          depositPolicy: "20% due when booked",
+          estimatedDuration: "5–6 hours",
           packingIncluded: true,
         },
         totalAmountCents: 184000,
@@ -404,32 +423,54 @@ async function seed() {
 
     const comparisonFixtures = [
       {
+        arrivalWindow: "9:00–11:00 AM",
         businessId: ids.businesses[1],
+        cancellationPolicy:
+          "The deposit is refundable up to 72 hours before arrival.",
         callId: ids.callCarolina,
         completeness: "0.94",
         confidence: "0.91",
+        crewSize: 3,
+        depositAmountCents: 51250,
+        depositPolicy: "25% due when booked",
         endedAt: "2026-07-19T10:14:00.000Z",
         evidenceId: ids.evidenceCarolina,
+        estimateType: "BINDING",
+        estimatedDuration: "5–7 hours",
         negotiationId: ids.negotiationCarolina,
         negotiationStatus: "UNCHANGED",
         phoneLabel: "carolina",
         quoteId: ids.quoteCarolina,
+        recommendationReason:
+          "Complete binding alternative with confirmed arrival and deposit terms, but no negotiated improvement.",
         riskFlags: [],
         score: "84.00",
         startedAt: "2026-07-19T10:06:00.000Z",
         totalAmountCents: 205000,
+        transcriptText:
+          "Relay: Can you improve the all-in price without changing the three-person crew?\nBusiness: We cannot reduce the complete binding quote below $2,050.\nRelay: Please confirm the 9:00–11:00 AM arrival window and 25% booking deposit.\nBusiness: Confirmed; packing materials and mileage are included.",
       },
       {
+        arrivalWindow: "12:00–3:00 PM",
         businessId: ids.businesses[2],
+        cancellationPolicy:
+          "The deposit is refundable up to five days before arrival.",
         callId: ids.callAtlas,
         completeness: "0.80",
         confidence: "0.76",
+        crewSize: 3,
+        depositAmountCents: 62000,
+        depositPolicy: "25% due when booked",
         endedAt: "2026-07-19T10:17:00.000Z",
         evidenceId: ids.evidenceAtlas,
+        estimateType: "NON_BINDING",
+        estimatedDuration: "6–8 hours",
         negotiationId: ids.negotiationAtlas,
         negotiationStatus: "DECLINED",
         phoneLabel: "atlas",
         quoteId: ids.quoteAtlas,
+        recommendationReason:
+          "Higher non-binding estimate with an unresolved access fee.",
         riskFlags: [
           {
             code: "unknown_access_fee",
@@ -441,6 +482,8 @@ async function seed() {
         score: "70.00",
         startedAt: "2026-07-19T10:08:00.000Z",
         totalAmountCents: 248000,
+        transcriptText:
+          "Relay: Is every required access fee included in the $2,480 estimate?\nBusiness: The estimate is non-binding and an access fee may still apply.\nRelay: Please confirm the noon–3:00 PM arrival window and three-person crew.\nBusiness: Confirmed, but the access fee cannot be priced until the site review.",
       },
     ];
 
@@ -457,6 +500,7 @@ async function seed() {
             outcome: "quote_received",
             quoteId: fixture.quoteId,
           },
+          transcriptText: fixture.transcriptText,
         },
         create: {
           aiDisclosureMadeAt: new Date(fixture.startedAt),
@@ -475,7 +519,7 @@ async function seed() {
             outcome: "quote_received",
             quoteId: fixture.quoteId,
           },
-          transcriptText: `Deterministic fixture transcript for ${fixture.phoneLabel}.`,
+          transcriptText: fixture.transcriptText,
         },
       });
 
@@ -515,10 +559,22 @@ async function seed() {
           callId: fixture.callId,
           completeness: fixture.completeness,
           confidence: fixture.confidence,
+          depositAmountCents: fixture.depositAmountCents,
+          estimateType: fixture.estimateType,
           negotiationId: fixture.negotiationId,
+          originalAmountCents: fixture.totalAmountCents,
+          recommendationReason: fixture.recommendationReason,
           riskFlags: fixture.riskFlags,
           runId: ids.run,
           score: fixture.score,
+          status: "FINAL",
+          terms: {
+            arrivalWindow: fixture.arrivalWindow,
+            cancellationPolicy: fixture.cancellationPolicy,
+            crewSize: fixture.crewSize,
+            depositPolicy: fixture.depositPolicy,
+            estimatedDuration: fixture.estimatedDuration,
+          },
           totalAmountCents: fixture.totalAmountCents,
         },
         create: {
@@ -527,21 +583,25 @@ async function seed() {
           completeness: fixture.completeness,
           confidence: fixture.confidence,
           currency: "USD",
-          estimateType:
-            fixture.quoteId === ids.quoteAtlas ? "NON_BINDING" : "BINDING",
+          depositAmountCents: fixture.depositAmountCents,
+          estimateType: fixture.estimateType,
           id: fixture.quoteId,
           jobId: ids.job,
           negotiationId: fixture.negotiationId,
           originalAmountCents: fixture.totalAmountCents,
           pricingModel: "FIXED",
-          recommendationReason:
-            fixture.quoteId === ids.quoteAtlas
-              ? "Higher non-binding estimate with an unresolved fee."
-              : "Complete binding alternative with no negotiated improvement.",
+          recommendationReason: fixture.recommendationReason,
           riskFlags: fixture.riskFlags,
           runId: ids.run,
           score: fixture.score,
           status: "FINAL",
+          terms: {
+            arrivalWindow: fixture.arrivalWindow,
+            cancellationPolicy: fixture.cancellationPolicy,
+            crewSize: fixture.crewSize,
+            depositPolicy: fixture.depositPolicy,
+            estimatedDuration: fixture.estimatedDuration,
+          },
           totalAmountCents: fixture.totalAmountCents,
         },
       });
@@ -660,7 +720,7 @@ async function seed() {
       update: {
         bestQuoteId: ids.quote,
         explanation:
-          "Pine & Co. is the best complete evidenced value in this fixture run.",
+          "Pine & Co. offers the strongest verified value: the lowest complete binding price, a confirmed morning arrival, and clear deposit terms.",
         factors: [
           {
             key: "value",
@@ -677,7 +737,7 @@ async function seed() {
         configurationVersion: "moving-v1",
         currency: "USD",
         explanation:
-          "Pine & Co. is the best complete evidenced value in this fixture run.",
+          "Pine & Co. offers the strongest verified value: the lowest complete binding price, a confirmed morning arrival, and clear deposit terms.",
         factors: [
           {
             key: "value",
@@ -697,6 +757,7 @@ async function seed() {
     await tx.decision.upsert({
       where: { id: ids.decision },
       update: {
+        note: "Selected for the strongest verified all-in value and complete scope.",
         outcome: "QUOTE_SELECTED",
         recommendationId: ids.recommendation,
         selectedQuoteId: ids.quote,
@@ -704,7 +765,7 @@ async function seed() {
       create: {
         decidedAt: new Date("2026-07-19T10:25:00.000Z"),
         id: ids.decision,
-        note: "Deterministic demo selection.",
+        note: "Selected for the strongest verified all-in value and complete scope.",
         outcome: "QUOTE_SELECTED",
         recommendationId: ids.recommendation,
         runId: ids.run,

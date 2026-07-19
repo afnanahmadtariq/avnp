@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from "vue";
 
+import ApiFeedback from "~/components/app/ApiFeedback.vue";
 import { createMovingSpecification } from "~/utils/job-specification";
 
 useSeoMeta({
@@ -86,7 +87,7 @@ async function createRequest(): Promise<void> {
         <RelayLogo />
       </NuxtLink>
       <NuxtLink class="brief-header__demo" to="/dashboard">
-        Prefer to look around? <span>Open demo →</span>
+        Already have a request? <span>Open workspace →</span>
       </NuxtLink>
     </header>
 
@@ -168,8 +169,9 @@ async function createRequest(): Promise<void> {
             <div class="brief-tip">
               <span aria-hidden="true">i</span>
               <p>
-                Voice and upload use deterministic demo fixtures. You still
-                review every extracted field before calls can begin.
+                Voice interview and upload currently prefill fixed sample
+                inputs; they do not process live audio or documents. Review and
+                edit every field before confirming.
               </p>
             </div>
           </fieldset>

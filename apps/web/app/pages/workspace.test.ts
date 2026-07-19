@@ -113,6 +113,8 @@ const run = {
       id: "quote-pine",
       inclusions: ["Labor", "Transport"],
       originalTotalCents: 221_000,
+      rating: 4.8,
+      reviewCount: 214,
       riskFlags: [],
       score: 94,
       status: "complete",
@@ -126,6 +128,8 @@ const run = {
       id: "quote-carolina",
       inclusions: ["Labor", "Transport"],
       originalTotalCents: 209_000,
+      rating: 4.6,
+      reviewCount: 168,
       riskFlags: [],
       score: 90,
       status: "complete",
@@ -180,6 +184,12 @@ describe("workspace page", () => {
 
     const callButtons = wrapper.findAll(".call-row");
     expect(callButtons).toHaveLength(3);
+    expect(wrapper.get(".selected-quote").text()).toContain(
+      "4.8 · 214 reviews",
+    );
+    expect(wrapper.get(".selected-quote").text()).toContain(
+      "4 verified evidence points",
+    );
 
     await callButtons[1]?.trigger("click");
     expect(wrapper.get(".call-detail h3").text()).toBe("Carolina Transit");

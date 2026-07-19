@@ -147,6 +147,18 @@ function humanize(value: string): string {
   return `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
 }
 
+function evidenceLabel(kind: string): string {
+  const labels: Record<string, string> = {
+    RECORDING: "Call recording",
+    SCREENSHOT: "Quote screenshot",
+    STRUCTURED_EXTRACTION: "Structured quote summary",
+    TRANSCRIPT: "Call transcript",
+    WRITTEN_QUOTE: "Written quote",
+  };
+
+  return labels[kind] ?? humanize(statusName(kind));
+}
+
 function jsonStringList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
 
@@ -171,11 +183,17 @@ function presentQuote(quote: RunQuoteRecord): Record<string, unknown> {
     confidence: Number(quote.confidence ?? 0),
     depositCents: quote.depositAmountCents ?? undefined,
     evidenceCount: quote.evidence.length,
+    estimatedDuration: asString(terms.estimatedDuration),
     id: quote.id,
     inclusions: quote.items
       .filter((item) => item.includedInTotal)
       .map((item) => item.label),
     originalTotalCents: quote.originalAmountCents ?? undefined,
+    rating:
+      quote.business.rating === null
+        ? undefined
+        : Number(quote.business.rating),
+    reviewCount: quote.business.reviewCount ?? undefined,
     riskFlags: jsonStringList(quote.riskFlags),
     savingsCents: quote.negotiatedSavingCents ?? 0,
     score: quote.score === null ? undefined : Number(quote.score),
@@ -1171,8 +1189,11 @@ export class ProductService implements OnApplicationBootstrap {
         runId,
         status: "FINAL",
         terms: toJson({
-          arrivalWindow: index === 0 ? "8:00–9:00 AM" : "9:00 AM–12:00 PM",
-          fixture: true,
+          arrivalWindow: market.arrivalWindow,
+          cancellationPolicy: market.cancellationPolicy,
+          crewSize: market.crewSize,
+          depositPolicy: market.depositPolicy,
+          estimatedDuration: market.estimatedDuration,
         }),
         totalAmountCents: market.currentOfferCents,
       },
@@ -1381,8 +1402,8 @@ export class ProductService implements OnApplicationBootstrap {
           businessId: call.businessId,
           businessName: call.business.name,
           currentOfferCents: quote?.totalAmountCents ?? undefined,
-          evidence: call.evidence.map(
-            (evidence) => `${humanize(statusName(evidence.kind))} evidence`,
+          evidence: call.evidence.map((evidence) =>
+            evidenceLabel(evidence.kind),
           ),
           id: call.id,
           initialOfferCents: quote?.originalAmountCents ?? undefined,

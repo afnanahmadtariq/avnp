@@ -93,9 +93,14 @@ export const demoBusinesses = [
 ] as const satisfies readonly DemoBusinessFixture[];
 
 export interface DemoMarketFixture {
+  readonly arrivalWindow: string;
+  readonly cancellationPolicy: string;
   readonly currentOfferCents: number;
+  readonly crewSize: number;
   readonly depositCents: number;
+  readonly depositPolicy: string;
   readonly estimateType: "BINDING" | "NON_BINDING";
+  readonly estimatedDuration: string;
   readonly initialOfferCents: number;
   readonly strategy:
     "DISCOUNT_REQUEST" | "FEE_REMOVAL" | "PRICE_MATCH" | "PROMOTION_REQUEST";
@@ -104,31 +109,49 @@ export interface DemoMarketFixture {
 
 export const demoMarket = [
   {
+    arrivalWindow: "8:00–9:00 AM",
+    cancellationPolicy:
+      "Free cancellation up to 48 hours before arrival; the deposit can transfer once with 24 hours' notice.",
     currentOfferCents: 184_000,
+    crewSize: 3,
     depositCents: 36_800,
+    depositPolicy: "20% due when booked",
     estimateType: "BINDING",
+    estimatedDuration: "5–6 hours",
     initialOfferCents: 221_000,
     strategy: "FEE_REMOVAL",
     transcript:
       "Relay: If we accept your earliest Tuesday window, can you improve the all-in price?\nBusiness: I can remove the fuel surcharge and reduce labor. The guaranteed total is $1,840.\nRelay: Please confirm stairs, mileage, and wardrobe boxes are included.\nBusiness: Confirmed.",
   },
   {
+    arrivalWindow: "9:00–11:00 AM",
+    cancellationPolicy:
+      "The deposit is refundable up to 72 hours before arrival.",
     currentOfferCents: 205_000,
+    crewSize: 3,
     depositCents: 51_250,
+    depositPolicy: "25% due when booked",
     estimateType: "BINDING",
+    estimatedDuration: "5–7 hours",
     initialOfferCents: 205_000,
     strategy: "DISCOUNT_REQUEST",
     transcript:
-      "Relay: Can you improve the all-in price without changing the scope?\nBusiness: We cannot reduce the complete binding quote below $2,050.",
+      "Relay: Can you improve the all-in price without changing the three-person crew?\nBusiness: We cannot reduce the complete binding quote below $2,050.\nRelay: Please confirm the 9:00–11:00 AM arrival window and 25% booking deposit.\nBusiness: Confirmed; packing materials and mileage are included.",
   },
   {
+    arrivalWindow: "12:00–3:00 PM",
+    cancellationPolicy:
+      "The deposit is refundable up to five days before arrival.",
     currentOfferCents: 248_000,
+    crewSize: 3,
     depositCents: 62_000,
+    depositPolicy: "25% due when booked",
     estimateType: "NON_BINDING",
+    estimatedDuration: "6–8 hours",
     initialOfferCents: 248_000,
     strategy: "DISCOUNT_REQUEST",
     transcript:
-      "Relay: Is every required access fee included?\nBusiness: The $2,480 estimate is non-binding and an access fee may still apply.",
+      "Relay: Is every required access fee included in the $2,480 estimate?\nBusiness: The estimate is non-binding and an access fee may still apply.\nRelay: Please confirm the noon–3:00 PM arrival window and three-person crew.\nBusiness: Confirmed, but the access fee cannot be priced until the site review.",
   },
 ] as const satisfies readonly DemoMarketFixture[];
 

@@ -11,9 +11,16 @@ const api = vi.hoisted(() => ({
   updateProfile: vi.fn(),
   updateSettings: vi.fn(),
 }));
+const accountIdentity = vi.hoisted(() => ({
+  syncAccountIdentity: vi.fn(),
+}));
 
 vi.mock("../composables/useRelayApi", () => ({
   useRelayApi: () => api,
+}));
+
+vi.mock("../composables/useAccountIdentity", () => ({
+  useAccountIdentity: () => accountIdentity,
 }));
 
 const globalComponents = {
@@ -75,6 +82,7 @@ describe("account pages", () => {
     await flushPromises();
 
     expect(wrapper.get(".profile-identity h2").text()).toBe("Relay Demo");
+    expect(accountIdentity.syncAccountIdentity).toHaveBeenCalledWith(profile);
 
     await wrapper
       .get<HTMLInputElement>('input[autocomplete="name"]')
@@ -89,6 +97,10 @@ describe("account pages", () => {
       phone: profile.phone,
       representedAs: profile.representedAs,
       timezone: profile.timezone,
+    });
+    expect(accountIdentity.syncAccountIdentity).toHaveBeenLastCalledWith({
+      ...profile,
+      displayName: "Relay Customer",
     });
     expect(wrapper.text()).toContain("Profile saved to Relay.");
   });

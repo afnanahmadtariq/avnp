@@ -256,7 +256,7 @@ async function downloadDataExport(): Promise<void> {
           <a class="settings-nav__active" href="#notifications">Notifications</a
           ><a href="#calling">Calling and consent</a
           ><a href="#privacy">Data and privacy</a
-          ><a href="#security">Security</a>
+          ><a href="#access">Workspace access</a>
         </nav>
         <div class="settings-content">
           <section id="notifications" class="settings-card">
@@ -427,11 +427,11 @@ async function downloadDataExport(): Promise<void> {
             </div>
           </section>
 
-          <section id="security" class="settings-card">
+          <section id="access" class="settings-card">
             <header>
               <div>
-                <h2>Security</h2>
-                <p>Review access to this demonstration account.</p>
+                <h2>Workspace access</h2>
+                <p>Understand how access works in this local build.</p>
               </div>
             </header>
             <div class="session-row">
@@ -441,10 +441,13 @@ async function downloadDataExport(): Promise<void> {
                   <path d="M7 17h6M10 14v3" /></svg
               ></span>
               <div>
-                <strong>Codex desktop · macOS</strong>
-                <p>Current session · Lahore, Pakistan</p>
+                <strong>Local development workspace</strong>
+                <p>
+                  Authentication and remote session management are not
+                  connected. Access is limited by the machine running Relay.
+                </p>
               </div>
-              <StatusBadge :dot="false" tone="success">Current</StatusBadge>
+              <StatusBadge :dot="false" tone="warning">No sign-in</StatusBadge>
             </div>
           </section>
         </div>

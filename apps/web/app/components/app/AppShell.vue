@@ -1,8 +1,17 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onMounted } from "vue";
+
+import { useAccountIdentity } from "~/composables/useAccountIdentity";
 
 const route = useRoute();
+const api = useRelayApi();
 const { publicId, runId } = useRequestContext();
+const {
+  displayName,
+  initials,
+  isLoaded: accountIdentityLoaded,
+  syncAccountIdentity,
+} = useAccountIdentity();
 
 interface NavItem {
   label: string;
@@ -41,8 +50,7 @@ const requestItems = computed<NavItem[]>(() => [
     icon: "business",
   },
   {
-    label: "Live calls",
-    mobileLabel: "Current",
+    label: "Calls",
     to: workspaceRoute.value.path,
     icon: "call",
   },
@@ -74,6 +82,18 @@ function itemTarget(item: NavItem) {
 function isMobileHidden(item: NavItem): boolean {
   return ["brief", "business", "settings"].includes(item.icon);
 }
+
+async function loadAccountIdentity(): Promise<void> {
+  if (route.path === "/profile" || accountIdentityLoaded.value) return;
+
+  try {
+    syncAccountIdentity(await api.getProfile());
+  } catch {
+    return;
+  }
+}
+
+onMounted(loadAccountIdentity);
 </script>
 
 <template>
@@ -88,7 +108,7 @@ function isMobileHidden(item: NavItem): boolean {
       </NuxtLink>
       <div class="app-header__context">
         <span class="app-header__context-dot" aria-hidden="true" />
-        Demo workspace
+        Local workspace
       </div>
       <NuxtLink
         aria-label="Open profile"
@@ -96,9 +116,10 @@ function isMobileHidden(item: NavItem): boolean {
         to="/profile"
       >
         <span class="app-header__profile-copy"
-          ><strong>Afnan Tariq</strong><small>Personal account</small></span
+          ><strong>{{ displayName }}</strong
+          ><small>Personal account</small></span
         >
-        <span aria-hidden="true" class="app-avatar">AT</span>
+        <span aria-hidden="true" class="app-avatar">{{ initials }}</span>
       </NuxtLink>
     </header>
 
@@ -170,9 +191,6 @@ function isMobileHidden(item: NavItem): boolean {
             <span class="app-nav-label app-nav-label--mobile">{{
               item.mobileLabel ?? item.label
             }}</span>
-            <span v-if="item.icon === 'call' && runId" class="app-nav-live"
-              >Live</span
-            >
           </NuxtLink>
         </div>
 
@@ -374,14 +392,6 @@ function isMobileHidden(item: NavItem): boolean {
   stroke-width: 1.5;
   width: 18px;
 }
-.app-nav-live {
-  background: #e8f8ef;
-  border-radius: 999px;
-  color: var(--relay-green);
-  font-size: var(--relay-text-meta);
-  font-weight: 650;
-  padding: 3px 6px;
-}
 .sidebar-trust {
   align-items: flex-start;
   background: #f3faf6;
@@ -425,7 +435,7 @@ function isMobileHidden(item: NavItem): boolean {
 }
 @media (max-width: 1024px) {
   .app-shell {
-    padding-bottom: env(safe-area-inset-bottom);
+    padding-bottom: calc(72px + env(safe-area-inset-bottom));
     padding-left: 0;
     padding-top: 64px;
   }
@@ -473,6 +483,9 @@ function isMobileHidden(item: NavItem): boolean {
     min-height: 54px;
     padding: 4px 2px;
   }
+  .app-sidebar .app-nav-link--mobile-hidden {
+    display: none;
+  }
   .app-nav-link--mobile-parent {
     background: var(--relay-blue-soft);
     color: var(--relay-blue);
@@ -482,9 +495,6 @@ function isMobileHidden(item: NavItem): boolean {
   .app-nav-icon svg {
     height: 19px;
     width: 19px;
-  }
-  .app-nav-live {
-    display: none;
   }
   .app-nav-label {
     display: none;
