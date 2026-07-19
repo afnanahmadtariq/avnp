@@ -6,6 +6,8 @@ Last reviewed: 2026-07-19
 
 Copy `.env.example` to `.env` for local development. Commit variable names and safe examples only; never commit real secrets. Browser exposure is limited to variables prefixed with `NUXT_PUBLIC_`.
 
+The root `pnpm dev`, `pnpm dev:web`, `pnpm dev:api`, and `pnpm dev:worker` commands load this repository-level `.env` before Turbo starts an application. Existing shell variables take precedence over values in the file. Keep the file at the repository root rather than copying secrets into individual application directories.
+
 | Variable                            | Consumer            | Required when               | Purpose                                             |
 | ----------------------------------- | ------------------- | --------------------------- | --------------------------------------------------- |
 | `NODE_ENV`                          | All runtimes        | Always                      | Runtime mode                                        |
