@@ -134,12 +134,27 @@ describe("queue contracts", () => {
   it("routes provider cancellation through the call execution queue", () => {
     const job = createQueueJob(
       queueJobNames.cancelCall,
-      { callId: "call_1", runId: "run_1" },
+      {
+        callId: "call_1",
+        providerCallId: "provider_call_1",
+        resumable: true,
+        runId: "run_1",
+      },
       { idempotencyKey: "call_1:cancel", traceId: "trace_1" },
     );
 
     expect(getQueueName(job.name)).toBe(queueNames.callExecution);
     expect(parseQueueJobEnvelope(job)).toEqual(job);
+  });
+
+  it("rejects resumable cancellation without an exact provider session", () => {
+    expect(() =>
+      createQueueJob(
+        queueJobNames.cancelCall,
+        { callId: "call_1", resumable: true, runId: "run_1" },
+        { idempotencyKey: "call_1:pause", traceId: "trace_1" },
+      ),
+    ).toThrow(InvalidQueueJobError);
   });
 
   it("rejects malformed or expanded payloads before processing", () => {

@@ -329,12 +329,74 @@ describe("WorkerOrchestrationService", () => {
     expect(secondEnvelope).toEqual(expectedFollowUp);
   });
 
+  it("does not update the job or emit terminal events when pause wins ranking", async () => {
+    const fixture = rankingRunFixture();
+    const run = {
+      ...fixture,
+      negotiations: fixture.negotiations.map((negotiation) => ({
+        ...negotiation,
+        currentRound: 1,
+      })),
+    };
+    const updateRun = vi.fn(async () => ({ count: 0 }));
+    const updateJob = vi.fn(async () => ({ count: 1 }));
+    const createEvent = vi.fn(async () => ({ id: "event-1" }));
+    const eventClient = eventTransactionClient(createEvent);
+    const transactionClient = {
+      ...eventClient,
+      job: { updateMany: updateJob },
+      negotiationRun: {
+        ...eventClient.negotiationRun,
+        updateMany: updateRun,
+      },
+    };
+    const transaction = vi.fn(async (operation: unknown) =>
+      (operation as (value: unknown) => Promise<unknown>)(transactionClient),
+    );
+    const client = {
+      $transaction: transaction,
+      negotiationRun: { findUnique: vi.fn(async () => run) },
+      quote: { update: vi.fn(async () => ({ id: "quote" })) },
+      recommendation: { upsert: vi.fn(async () => ({ id: "recommendation" })) },
+    } as unknown as DatabaseClient;
+    const orchestrator = createOrchestrator({
+      callProvider: fakeCallProvider(),
+      client,
+      enqueue: vi.fn(),
+    });
+    const envelope = createQueueJob(
+      queueJobNames.rankQuotes,
+      { runId: "run-1" },
+      { idempotencyKey: "run-1:rank", traceId: "trace-1" },
+    );
+
+    await orchestrator.rankRunQuotes(envelope, processingContext());
+
+    expect(updateRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          id: "run-1",
+          status: {
+            in: [
+              NegotiationRunStatus.QUEUED,
+              NegotiationRunStatus.CALLING,
+              NegotiationRunStatus.COMPARING,
+            ],
+          },
+        },
+      }),
+    );
+    expect(updateJob).not.toHaveBeenCalled();
+    expect(createEvent).not.toHaveBeenCalled();
+    expect(transaction).toHaveBeenCalledOnce();
+  });
+
   it("cancels an already-authorized live provider call once and records completion", async () => {
     const cancelCall = vi.fn(async (): Promise<ProviderResult<void>> => ({
       ok: true,
       value: undefined,
     }));
-    const update = vi.fn(async () => ({ id: "call-1" }));
+    const updateMany = vi.fn(async () => ({ count: 1 }));
     const createEvent = vi.fn(async () => ({ id: "event-1" }));
     const enqueue = vi.fn(async () => ({
       jobId: "rank-job",
@@ -352,12 +414,14 @@ describe("WorkerOrchestrationService", () => {
       call: {
         findUnique: vi.fn(async () => ({
           id: "call-1",
+          negotiation: null,
           providerCallId: "conversation-1",
+          run: { id: "run-1", status: NegotiationRunStatus.CANCELLED },
           runId: "run-1",
           status: DatabaseCallStatus.CANCELLED,
           structuredOutcome: null,
         })),
-        update,
+        updateMany,
       },
     } as unknown as DatabaseClient;
     const orchestrator = createOrchestrator({
@@ -374,7 +438,7 @@ describe("WorkerOrchestrationService", () => {
     await orchestrator.cancelCall(envelope, processingContext());
 
     expect(cancelCall).toHaveBeenCalledOnce();
-    expect(update).toHaveBeenCalledWith(
+    expect(updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           structuredOutcome: expect.objectContaining({
@@ -386,6 +450,279 @@ describe("WorkerOrchestrationService", () => {
     expect(createEvent).toHaveBeenCalledOnce();
     expect(enqueue).toHaveBeenCalledWith(
       expect.objectContaining({ name: queueJobNames.rankQuotes }),
+    );
+  });
+
+  it("requeues a paused provider call when resume wins before cancellation completes", async () => {
+    const cancelCall = vi.fn(async (): Promise<ProviderResult<void>> => ({
+      ok: true,
+      value: undefined,
+    }));
+    const updateMany = vi
+      .fn()
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 1 });
+    const enqueue = vi.fn(async () => ({
+      jobId: "place-job",
+      queueName: queueNames.callExecution,
+    }));
+    const transactionClient = eventTransactionClient(
+      vi.fn(async () => ({ id: "event-1" })),
+    );
+    const client = {
+      $transaction: vi.fn(async (operation: unknown) =>
+        (operation as (value: unknown) => Promise<unknown>)(transactionClient),
+      ),
+      call: {
+        findUnique: vi.fn(async () => ({
+          businessId: "business-1",
+          id: "call-1",
+          negotiation: {
+            metadata: null,
+            strategy: "FEE_REMOVAL",
+          },
+          providerCallId: "conversation-paused",
+          run: {
+            id: "run-1",
+            specificationVersionId: "version-1",
+            status: NegotiationRunStatus.CALLING,
+          },
+          runId: "run-1",
+          status: DatabaseCallStatus.DIALING,
+          structuredOutcome: null,
+        })),
+        updateMany,
+      },
+    } as unknown as DatabaseClient;
+    const orchestrator = createOrchestrator({
+      callProvider: fakeCallProvider({ cancelCall }),
+      client,
+      enqueue,
+    });
+    const envelope = createQueueJob(
+      queueJobNames.cancelCall,
+      {
+        callId: "call-1",
+        providerCallId: "conversation-paused",
+        resumable: true,
+        runId: "run-1",
+      },
+      { idempotencyKey: "call-1:pause", traceId: "trace-1" },
+    );
+
+    await orchestrator.cancelCall(envelope, processingContext());
+
+    expect(cancelCall).toHaveBeenCalledWith(
+      "conversation-paused",
+      expect.any(Object),
+    );
+    expect(updateMany).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        data: expect.objectContaining({
+          providerCallId: null,
+          status: DatabaseCallStatus.QUEUED,
+        }),
+        where: expect.objectContaining({
+          providerCallId: "conversation-paused",
+        }),
+      }),
+    );
+    expect(updateMany).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        data: { attempt: { increment: 1 } },
+        where: expect.objectContaining({
+          run: { status: NegotiationRunStatus.CALLING },
+          status: DatabaseCallStatus.QUEUED,
+        }),
+      }),
+    );
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: queueJobNames.placeCall,
+        payload: {
+          businessId: "business-1",
+          callId: "call-1",
+          runId: "run-1",
+          specificationVersionId: "version-1",
+          strategy: "fee_removal",
+        },
+      }),
+    );
+    expect(enqueue).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: queueJobNames.rankQuotes }),
+    );
+  });
+
+  it("does not let a stale pause job cancel a newer provider call", async () => {
+    const cancelCall = vi.fn(async (): Promise<ProviderResult<void>> => ({
+      ok: true,
+      value: undefined,
+    }));
+    const updateMany = vi.fn();
+    const enqueue = vi.fn();
+    const client = {
+      call: {
+        findUnique: vi.fn(async () => ({
+          businessId: "business-1",
+          id: "call-1",
+          negotiation: { metadata: null, strategy: "FEE_REMOVAL" },
+          providerCallId: "conversation-new",
+          run: {
+            id: "run-1",
+            specificationVersionId: "version-1",
+            status: NegotiationRunStatus.CALLING,
+          },
+          runId: "run-1",
+          status: DatabaseCallStatus.DIALING,
+          structuredOutcome: {
+            pausedProviderCancellations: [
+              {
+                cancelledAt: "2026-07-20T10:00:00.000Z",
+                providerCallId: "conversation-old",
+              },
+            ],
+          },
+        })),
+        updateMany,
+      },
+    } as unknown as DatabaseClient;
+    const orchestrator = createOrchestrator({
+      callProvider: fakeCallProvider({ cancelCall }),
+      client,
+      enqueue,
+    });
+    const envelope = createQueueJob(
+      queueJobNames.cancelCall,
+      {
+        callId: "call-1",
+        providerCallId: "conversation-old",
+        resumable: true,
+        runId: "run-1",
+      },
+      { idempotencyKey: "call-1:pause:old", traceId: "trace-1" },
+    );
+
+    await orchestrator.cancelCall(envelope, processingContext());
+
+    expect(cancelCall).not.toHaveBeenCalled();
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it("ignores an outcome poll left behind by a paused call attempt", async () => {
+    const getCall = vi.fn();
+    const updateMany = vi.fn();
+    const enqueue = vi.fn();
+    const client = {
+      call: {
+        findUnique: vi.fn(async () => ({
+          ...outcomeProcessingCallFixture(),
+          providerCallId: null,
+          status: DatabaseCallStatus.QUEUED,
+        })),
+        updateMany,
+      },
+    } as unknown as DatabaseClient;
+    const orchestrator = createOrchestrator({
+      callProvider: fakeCallProvider({ getCall }),
+      client,
+      enqueue,
+    });
+
+    await orchestrator.processCallOutcome(
+      outcomeEnvelope(),
+      processingContext(),
+    );
+
+    expect(getCall).not.toHaveBeenCalled();
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it("retries resume enqueue after the provider call was already reset", async () => {
+    const cancelCall = vi.fn(async (): Promise<ProviderResult<void>> => ({
+      ok: true,
+      value: undefined,
+    }));
+    const initialCall = {
+      businessId: "business-1",
+      id: "call-1",
+      negotiation: { metadata: null, strategy: "FEE_REMOVAL" },
+      providerCallId: "conversation-paused",
+      run: {
+        id: "run-1",
+        specificationVersionId: "version-1",
+        status: NegotiationRunStatus.CALLING,
+      },
+      runId: "run-1",
+      status: DatabaseCallStatus.DIALING,
+      structuredOutcome: null,
+    };
+    const resetCall = {
+      ...initialCall,
+      providerCallId: null,
+      status: DatabaseCallStatus.QUEUED,
+      structuredOutcome: {
+        pausedProviderCancellations: [
+          {
+            cancelledAt: "2026-07-20T10:00:00.000Z",
+            providerCallId: "conversation-paused",
+          },
+        ],
+      },
+    };
+    const findUnique = vi
+      .fn()
+      .mockResolvedValueOnce(initialCall)
+      .mockResolvedValueOnce(resetCall)
+      .mockResolvedValueOnce(resetCall);
+    const updateMany = vi
+      .fn()
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 });
+    const enqueue = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("queue unavailable"))
+      .mockResolvedValueOnce({
+        jobId: "place-job",
+        queueName: queueNames.callExecution,
+      });
+    const client = {
+      $transaction: vi.fn(async (operation: unknown) =>
+        (operation as (value: unknown) => Promise<unknown>)(
+          eventTransactionClient(vi.fn(async () => ({ id: "event-1" }))),
+        ),
+      ),
+      call: { findUnique, updateMany },
+    } as unknown as DatabaseClient;
+    const orchestrator = createOrchestrator({
+      callProvider: fakeCallProvider({ cancelCall }),
+      client,
+      enqueue,
+    });
+    const envelope = createQueueJob(
+      queueJobNames.cancelCall,
+      {
+        callId: "call-1",
+        providerCallId: "conversation-paused",
+        resumable: true,
+        runId: "run-1",
+      },
+      { idempotencyKey: "call-1:pause", traceId: "trace-1" },
+    );
+
+    await expect(
+      orchestrator.cancelCall(envelope, processingContext()),
+    ).rejects.toThrow("queue unavailable");
+    await orchestrator.cancelCall(envelope, processingContext());
+
+    expect(cancelCall).toHaveBeenCalledTimes(2);
+    expect(enqueue).toHaveBeenCalledTimes(2);
+    expect(enqueue).toHaveBeenLastCalledWith(
+      expect.objectContaining({ name: queueJobNames.placeCall }),
     );
   });
 
@@ -468,22 +805,38 @@ describe("WorkerOrchestrationService", () => {
       negotiationId: "negotiation-competing",
       negotiationStatus: NegotiationStatus.UNCHANGED,
     });
-    const eventClient = eventTransactionClient(
-      vi.fn(async () => ({ id: "event-1" })),
-    );
+    const registerCall = vi.fn(async () => ({ count: 1 }));
+    const transactionClient = {
+      ...eventTransactionClient(vi.fn(async () => ({ id: "event-1" }))),
+      call: {
+        findUnique: vi.fn(async () => ({
+          ...followUpCallFixture(),
+          providerCallId: "conversation-follow-up",
+          run: {
+            ...followUpCallFixture().run,
+            status: NegotiationRunStatus.CALLING,
+          },
+          status: DatabaseCallStatus.DIALING,
+        })),
+        updateMany: registerCall,
+      },
+      job: { updateMany: vi.fn(async () => ({ count: 1 })) },
+      negotiationRun: {
+        ...eventTransactionClient(vi.fn()).negotiationRun,
+        updateMany: vi.fn(async () => ({ count: 1 })),
+      },
+    };
+    const claimCall = vi.fn(async () => ({ count: 1 }));
     const client = {
       $transaction: vi.fn(async (operation: unknown) => {
-        if (Array.isArray(operation)) return Promise.all(operation);
-        return (operation as (value: unknown) => Promise<unknown>)(eventClient);
+        return (operation as (value: unknown) => Promise<unknown>)(
+          transactionClient,
+        );
       }),
       call: {
         findUnique: vi.fn(async () => followUpCallFixture()),
         update: vi.fn(async () => ({ id: "call-follow-up" })),
-        updateMany: vi.fn(async () => ({ count: 1 })),
-      },
-      job: { update: vi.fn(async () => ({ id: "job-1" })) },
-      negotiationRun: {
-        updateMany: vi.fn(async () => ({ count: 1 })),
+        updateMany: claimCall,
       },
       quote: leverageQuoteQueries(current, competing),
     } as unknown as DatabaseClient;
@@ -520,6 +873,558 @@ describe("WorkerOrchestrationService", () => {
         },
       }),
       expect.any(Object),
+    );
+    expect(claimCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: DatabaseCallStatus.DIALING }),
+      }),
+    );
+    expect(registerCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.not.objectContaining({ status: expect.anything() }),
+      }),
+    );
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idempotencyKey: "call-follow-up:outcome-poll:conversation-follow-up",
+        name: queueJobNames.processCallOutcome,
+      }),
+    );
+  });
+
+  it("preserves a pause that wins while the provider call is starting", async () => {
+    const startCall = vi.fn(async () => ({
+      ok: true as const,
+      value: {
+        providerCallId: "conversation-paused",
+        status: "queued" as const,
+        submittedAt: "2026-07-19T10:10:00.000Z",
+      },
+    }));
+    const cancelCall = vi.fn(async (): Promise<ProviderResult<void>> => ({
+      ok: true,
+      value: undefined,
+    }));
+    const enqueue = vi.fn(async () => ({
+      jobId: "outcome-job",
+      queueName: queueNames.callExecution,
+    }));
+    const eventClient = eventTransactionClient(
+      vi.fn(async () => ({ id: "event-1" })),
+    );
+    const updateRun = vi.fn(async () => ({ count: 0 }));
+    const updateJob = vi.fn(async () => ({ count: 1 }));
+    const transactionClient = {
+      ...eventClient,
+      call: {
+        findUnique: vi.fn(async () => ({
+          ...followUpCallFixture(),
+          providerCallId: "conversation-paused",
+          run: {
+            ...followUpCallFixture().run,
+            status: NegotiationRunStatus.PAUSED,
+          },
+          status: DatabaseCallStatus.DIALING,
+          structuredOutcome: null,
+        })),
+        updateMany: vi.fn(async () => ({ count: 1 })),
+      },
+      job: { updateMany: updateJob },
+      negotiationRun: { ...eventClient.negotiationRun, updateMany: updateRun },
+    };
+    const claimCall = vi
+      .fn()
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 });
+    const client = {
+      $transaction: vi.fn(async (operation: unknown) =>
+        (operation as (value: unknown) => Promise<unknown>)(transactionClient),
+      ),
+      call: {
+        findUnique: vi.fn(async () => followUpCallFixture()),
+        updateMany: claimCall,
+      },
+    } as unknown as DatabaseClient;
+    const orchestrator = createOrchestrator({
+      callProvider: fakeCallProvider({ cancelCall, startCall }),
+      client,
+      enqueue,
+    });
+    const envelope = createQueueJob(
+      queueJobNames.placeCall,
+      {
+        businessId: "business-current",
+        callId: "call-follow-up",
+        runId: "run-1",
+        specificationVersionId: "version-1",
+        strategy: "fee_removal",
+      },
+      { idempotencyKey: "call-follow-up:place", traceId: "trace-1" },
+    );
+
+    await orchestrator.placeCall(envelope, processingContext());
+
+    expect(startCall).toHaveBeenCalledOnce();
+    expect(cancelCall).toHaveBeenCalledWith(
+      "conversation-paused",
+      expect.any(Object),
+    );
+    expect(updateRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: {
+            in: [NegotiationRunStatus.QUEUED, NegotiationRunStatus.CALLING],
+          },
+        }),
+      }),
+    );
+    expect(updateJob).not.toHaveBeenCalled();
+    expect(claimCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          run: {
+            status: {
+              in: [NegotiationRunStatus.QUEUED, NegotiationRunStatus.CALLING],
+            },
+          },
+        }),
+      }),
+    );
+    expect(claimCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          endedAt: null,
+          providerCallId: null,
+          startedAt: null,
+          status: DatabaseCallStatus.QUEUED,
+          structuredOutcome: expect.objectContaining({
+            pausedProviderCancellations: [
+              {
+                cancelledAt: expect.any(String),
+                providerCallId: "conversation-paused",
+              },
+            ],
+          }),
+        }),
+        where: expect.objectContaining({
+          providerCallId: "conversation-paused",
+        }),
+      }),
+    );
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it("does not overwrite cancellation when a provider rejects a raced call start", async () => {
+    const startCall = vi.fn(async () => ({
+      error: {
+        code: "unavailable" as const,
+        message: "provider unavailable",
+        provider: "fake-calls",
+        retryable: false,
+      },
+      ok: false as const,
+    }));
+    const updateMany = vi
+      .fn()
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 0 });
+    const enqueue = vi.fn();
+    const client = {
+      call: {
+        findUnique: vi.fn(async () => followUpCallFixture()),
+        updateMany,
+      },
+    } as unknown as DatabaseClient;
+    const orchestrator = createOrchestrator({
+      callProvider: fakeCallProvider({ startCall }),
+      client,
+      enqueue,
+    });
+    const envelope = createQueueJob(
+      queueJobNames.placeCall,
+      {
+        businessId: "business-current",
+        callId: "call-follow-up",
+        runId: "run-1",
+        specificationVersionId: "version-1",
+        strategy: "fee_removal",
+      },
+      { idempotencyKey: "call-follow-up:place", traceId: "trace-1" },
+    );
+
+    await orchestrator.placeCall(envelope, processingContext());
+
+    expect(updateMany).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        data: expect.objectContaining({ status: DatabaseCallStatus.FAILED }),
+        where: expect.objectContaining({
+          run: {
+            status: {
+              in: [NegotiationRunStatus.QUEUED, NegotiationRunStatus.CALLING],
+            },
+          },
+          status: DatabaseCallStatus.DIALING,
+        }),
+      }),
+    );
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it("restores an unregistered dialing claim when its run is paused", async () => {
+    const startCall = vi.fn();
+    const updateMany = vi.fn(async () => ({ count: 1 }));
+    const client = {
+      call: {
+        findUnique: vi.fn(async () => ({
+          ...followUpCallFixture(),
+          run: {
+            ...followUpCallFixture().run,
+            status: NegotiationRunStatus.PAUSED,
+          },
+          status: DatabaseCallStatus.DIALING,
+        })),
+        updateMany,
+      },
+    } as unknown as DatabaseClient;
+    const orchestrator = createOrchestrator({
+      callProvider: fakeCallProvider({ startCall }),
+      client,
+      enqueue: vi.fn(),
+    });
+    const envelope = createQueueJob(
+      queueJobNames.placeCall,
+      {
+        businessId: "business-current",
+        callId: "call-follow-up",
+        runId: "run-1",
+        specificationVersionId: "version-1",
+        strategy: "fee_removal",
+      },
+      { idempotencyKey: "call-follow-up:place", traceId: "trace-1" },
+    );
+
+    await orchestrator.placeCall(envelope, processingContext());
+
+    expect(startCall).not.toHaveBeenCalled();
+    expect(updateMany).toHaveBeenCalledWith({
+      data: {
+        failureCode: null,
+        failureMessage: null,
+        status: DatabaseCallStatus.QUEUED,
+      },
+      where: {
+        id: "call-follow-up",
+        providerCallId: null,
+        run: { status: NegotiationRunStatus.PAUSED },
+        status: DatabaseCallStatus.DIALING,
+      },
+    });
+  });
+
+  it("cancels a provider call registered after its run was cancelled", async () => {
+    const startCall = vi.fn(async () => ({
+      ok: true as const,
+      value: {
+        providerCallId: "conversation-cancelled",
+        status: "queued" as const,
+        submittedAt: "2026-07-19T10:10:00.000Z",
+      },
+    }));
+    const cancelCall = vi.fn(async (): Promise<ProviderResult<void>> => ({
+      ok: true,
+      value: undefined,
+    }));
+    const enqueue = vi.fn(async () => ({
+      jobId: "rank-job",
+      queueName: queueNames.quoteAnalysis,
+    }));
+    const eventClient = eventTransactionClient(
+      vi.fn(async () => ({ id: "event-1" })),
+    );
+    const updateJob = vi.fn(async () => ({ count: 1 }));
+    const transactionClient = {
+      ...eventClient,
+      call: {
+        findUnique: vi.fn(async () => ({
+          ...followUpCallFixture(),
+          providerCallId: "conversation-cancelled",
+          run: {
+            ...followUpCallFixture().run,
+            status: NegotiationRunStatus.CANCELLED,
+          },
+          status: DatabaseCallStatus.CANCELLED,
+          structuredOutcome: null,
+        })),
+        updateMany: vi.fn(async () => ({ count: 1 })),
+      },
+      job: { updateMany: updateJob },
+      negotiationRun: {
+        ...eventClient.negotiationRun,
+        updateMany: vi.fn(async () => ({ count: 0 })),
+      },
+    };
+    const updateCall = vi.fn(async () => ({ id: "call-follow-up" }));
+    const updateCallMany = vi.fn(async () => ({ count: 1 }));
+    const client = {
+      $transaction: vi.fn(async (operation: unknown) =>
+        (operation as (value: unknown) => Promise<unknown>)(transactionClient),
+      ),
+      call: {
+        findUnique: vi.fn(async () => followUpCallFixture()),
+        update: updateCall,
+        updateMany: updateCallMany,
+      },
+    } as unknown as DatabaseClient;
+    const orchestrator = createOrchestrator({
+      callProvider: fakeCallProvider({ cancelCall, startCall }),
+      client,
+      enqueue,
+    });
+    const envelope = createQueueJob(
+      queueJobNames.placeCall,
+      {
+        businessId: "business-current",
+        callId: "call-follow-up",
+        runId: "run-1",
+        specificationVersionId: "version-1",
+        strategy: "fee_removal",
+      },
+      { idempotencyKey: "call-follow-up:place", traceId: "trace-1" },
+    );
+
+    await orchestrator.placeCall(envelope, processingContext());
+
+    expect(cancelCall).toHaveBeenCalledWith(
+      "conversation-cancelled",
+      expect.any(Object),
+    );
+    expect(updateJob).not.toHaveBeenCalled();
+    expect(updateCallMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          structuredOutcome: expect.objectContaining({
+            providerCancellationCompletedAt: expect.any(String),
+          }),
+        }),
+      }),
+    );
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({ name: queueJobNames.rankQuotes }),
+    );
+    expect(enqueue).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: queueJobNames.processCallOutcome }),
+    );
+  });
+
+  it("settles and ranks a call when outcome polling reaches its final attempt", async () => {
+    const call = outcomeProcessingCallFixture();
+    const getCall = vi.fn(async () => ({
+      ok: true as const,
+      value: {
+        providerCallId: call.providerCallId,
+        status: "in_progress" as const,
+        updatedAt: "2026-07-19T10:30:00.000Z",
+      },
+    }));
+    const enqueue = vi.fn(async () => ({
+      jobId: "rank-job",
+      queueName: queueNames.quoteAnalysis,
+    }));
+    const updateMany = vi.fn(async () => ({ count: 1 }));
+    const eventClient = eventTransactionClient(
+      vi.fn(async () => ({ id: "event-1" })),
+    );
+    const client = {
+      $transaction: vi.fn(async (operation: unknown) =>
+        (operation as (value: unknown) => Promise<unknown>)(eventClient),
+      ),
+      call: {
+        findUnique: vi.fn(async () => call),
+        update: vi.fn(async () => ({ id: call.id })),
+        updateMany,
+      },
+    } as unknown as DatabaseClient;
+    const orchestrator = createOrchestrator({
+      callProvider: fakeCallProvider({ getCall }),
+      client,
+      enqueue,
+    });
+
+    await orchestrator.processCallOutcome(
+      outcomeEnvelope(),
+      finalOutcomeContext(),
+    );
+
+    expect(updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          failureCode: "outcome_processing_failed",
+          status: DatabaseCallStatus.FAILED,
+          structuredOutcome: expect.objectContaining({ extraction: "failed" }),
+          transcriptText: null,
+        }),
+      }),
+    );
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({ name: queueJobNames.rankQuotes }),
+    );
+  });
+
+  it("settles and ranks a terminal call when transcript evidence storage fails", async () => {
+    const call = outcomeProcessingCallFixture();
+    const getCall = vi.fn(async () => ({
+      ok: true as const,
+      value: {
+        providerCallId: call.providerCallId,
+        status: "completed" as const,
+        transcriptText: "Business: The total is $1,850.",
+        updatedAt: "2026-07-19T10:30:00.000Z",
+      },
+    }));
+    const enqueue = vi.fn(async () => ({
+      jobId: "rank-job",
+      queueName: queueNames.quoteAnalysis,
+    }));
+    const updateMany = vi.fn(async () => ({ count: 1 }));
+    const eventClient = eventTransactionClient(
+      vi.fn(async () => ({ id: "event-1" })),
+    );
+    const client = {
+      $transaction: vi.fn(async (operation: unknown) =>
+        (operation as (value: unknown) => Promise<unknown>)(eventClient),
+      ),
+      call: {
+        findUnique: vi.fn(async () => call),
+        update: vi.fn(async () => ({ id: call.id })),
+        updateMany,
+      },
+      evidence: { findFirst: vi.fn(async () => null) },
+    } as unknown as DatabaseClient;
+    const orchestrator = createOrchestrator({
+      callProvider: fakeCallProvider({ getCall }),
+      client,
+      enqueue,
+      providers: {
+        storage: {
+          delete: vi.fn(),
+          getSignedReadUrl: vi.fn(),
+          name: "failing-storage",
+          put: vi.fn(async () => ({
+            error: {
+              code: "unavailable" as const,
+              message: "storage unavailable",
+              provider: "failing-storage",
+              retryable: false,
+            },
+            ok: false as const,
+          })),
+        },
+      },
+    });
+
+    await expect(
+      orchestrator.processCallOutcome(outcomeEnvelope(), finalOutcomeContext()),
+    ).rejects.toThrow(/rejected the operation/);
+
+    expect(updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          failureCode: "outcome_processing_failed",
+          status: DatabaseCallStatus.FAILED,
+          structuredOutcome: expect.objectContaining({ extraction: "failed" }),
+          transcriptText: null,
+        }),
+      }),
+    );
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({ name: queueJobNames.rankQuotes }),
+    );
+  });
+
+  it("reconciles a failed provider cleanup before failing or ranking the call", async () => {
+    const call = outcomeProcessingCallFixture();
+    const getCall = vi.fn(async () => ({
+      error: {
+        code: "authentication" as const,
+        message: "provider credentials were rejected",
+        provider: "fake-calls",
+        retryable: false,
+      },
+      ok: false as const,
+    }));
+    const cancelCall = vi.fn(async (): Promise<ProviderResult<void>> => ({
+      error: {
+        code: "unavailable",
+        message: "provider cancellation is temporarily unavailable",
+        provider: "fake-calls",
+        retryable: true,
+      },
+      ok: false,
+    }));
+    const enqueue = vi.fn(async () => ({
+      jobId: "reconciliation-job",
+      queueName: queueNames.callExecution,
+    }));
+    const updateMany = vi.fn(async () => ({ count: 1 }));
+    const client = {
+      call: {
+        findUnique: vi.fn(async () => call),
+        updateMany,
+      },
+    } as unknown as DatabaseClient;
+    const orchestrator = createOrchestrator({
+      callProvider: fakeCallProvider({ cancelCall, getCall }),
+      client,
+      enqueue,
+    });
+
+    await expect(
+      orchestrator.processCallOutcome(outcomeEnvelope(), processingContext()),
+    ).rejects.toThrow(/rejected the operation/);
+
+    expect(cancelCall).toHaveBeenCalledWith(
+      "conversation-outcome",
+      expect.any(Object),
+    );
+    expect(updateMany).toHaveBeenCalledWith({
+      data: {
+        failureCode: "provider_cleanup_pending",
+        failureMessage:
+          "Call outcome processing is waiting for provider reconciliation.",
+        structuredOutcome: {
+          cleanup: "pending",
+          cleanupFailureCode: "unavailable",
+        },
+      },
+      where: {
+        id: "call-outcome",
+        providerCallId: "conversation-outcome",
+        run: {
+          status: {
+            in: [NegotiationRunStatus.QUEUED, NegotiationRunStatus.CALLING],
+          },
+        },
+        runId: "run-1",
+        status: DatabaseCallStatus.IN_PROGRESS,
+      },
+    });
+    expect(updateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: DatabaseCallStatus.FAILED }),
+      }),
+    );
+    expect(enqueue).toHaveBeenCalledOnce();
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: queueJobNames.processCallOutcome,
+        payload: outcomeEnvelope().payload,
+      }),
+    );
+    expect(enqueue).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: queueJobNames.rankQuotes }),
     );
   });
 
@@ -800,6 +1705,48 @@ function processingContext(): QueueProcessingContext {
     bullJobId: "bull-job-1",
     queueName: queueNames.callExecution,
     updateProgress: async () => undefined,
+  };
+}
+
+function finalOutcomeContext(): QueueProcessingContext {
+  return {
+    ...processingContext(),
+    attempt: 181,
+    attemptsAllowed: 181,
+  };
+}
+
+function outcomeEnvelope() {
+  return createQueueJob(
+    queueJobNames.processCallOutcome,
+    {
+      callId: "call-outcome",
+      providerEventId: "poll:conversation-outcome",
+      runId: "run-1",
+    },
+    { idempotencyKey: "call-outcome:poll", traceId: "trace-1" },
+  );
+}
+
+function outcomeProcessingCallFixture() {
+  return {
+    endedAt: null,
+    failureCode: null,
+    id: "call-outcome",
+    job: { user: null },
+    jobId: "job-1",
+    negotiationId: "negotiation-1",
+    providerCallId: "conversation-outcome",
+    run: {
+      id: "run-1",
+      recordingConsentAt: null,
+      status: NegotiationRunStatus.CALLING,
+    },
+    runId: "run-1",
+    startedAt: new Date("2026-07-19T10:00:00.000Z"),
+    status: DatabaseCallStatus.IN_PROGRESS,
+    structuredOutcome: null,
+    transcriptText: null,
   };
 }
 

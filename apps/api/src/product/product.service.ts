@@ -163,6 +163,12 @@ function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+function asFiniteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
 function profilePhone(value: unknown): string | null {
   return typeof value === "string" && /^\+[1-9]\d{7,14}$/u.test(value)
     ? value
@@ -225,6 +231,35 @@ function callProgress(status: string): number {
     QUEUED: 0,
   };
   return progress[status] ?? 0;
+}
+
+function retainedTranscript(call: RunRecord["calls"][number]): string {
+  if (!call.transcriptText) return "";
+  if (transcriptExtractionSettled(call.structuredOutcome)) return "";
+  if (!["CANCELLED", "COMPLETED", "FAILED"].includes(call.status)) {
+    return call.transcriptText;
+  }
+
+  const transcriptEvidence = call.evidence.find(
+    (evidence) => evidence.kind === "TRANSCRIPT",
+  );
+  if (
+    !transcriptEvidence ||
+    (transcriptEvidence.retentionUntil !== null &&
+      transcriptEvidence.retentionUntil.getTime() <= Date.now())
+  ) {
+    return "";
+  }
+
+  return call.transcriptText;
+}
+
+function transcriptExtractionSettled(value: unknown): boolean {
+  const extraction = asString(asRecord(value).extraction);
+  return (
+    extraction !== undefined &&
+    ["completed", "failed", "skipped"].includes(extraction)
+  );
 }
 
 function jsonStringList(value: unknown): string[] {
@@ -506,17 +541,36 @@ export class ProductService {
 
     const specification = dto.specification ?? job.specification;
 
-    await this.database.job.update({
-      data: {
-        confirmedAt: null,
-        currency: dto.specification?.budget?.currency ?? job.currency,
-        specification: toJson(specification),
-        status: "DRAFT",
-        targetBudgetCents:
-          dto.specification?.budget?.amountMinor ?? job.targetBudgetCents,
-        title: dto.title?.trim() || job.title,
-      },
-      where: { id: job.id },
+    await this.database.$transaction(async (transaction) => {
+      await transaction.$queryRaw(
+        Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${job.id}, 0))`,
+      );
+      const concurrentRun = await transaction.negotiationRun.findFirst({
+        select: { id: true },
+        where: { jobId: job.id, status: { in: [...activeRunStatuses] } },
+      });
+      if (concurrentRun !== null) {
+        throw new ConflictException(
+          "The brief cannot change while a negotiation run is active.",
+        );
+      }
+      await transaction.job.update({
+        data: {
+          confirmedAt: null,
+          currency: dto.specification?.budget?.currency ?? job.currency,
+          specification: toJson(specification),
+          status: "DRAFT",
+          targetBudgetCents:
+            dto.specification?.budget?.amountMinor ?? job.targetBudgetCents,
+          title: dto.title?.trim() || job.title,
+        },
+        where: { id: job.id },
+      });
+      if (dto.specification !== undefined) {
+        await transaction.jobBusiness.deleteMany({
+          where: { jobId: job.id },
+        });
+      }
     });
     await this.recordAudit(job.id, "job.draft.updated", {
       priorConfirmedVersions: job.specificationVersions.length,
@@ -541,9 +595,6 @@ export class ProductService {
     }
 
     const digest = contentDigest(parsed.data);
-    const existing = job.specificationVersions.find(
-      (version) => version.contentDigest === digest,
-    );
     const confirmedAt = new Date();
     const sourceMetadata = toJson({
       consent: {
@@ -559,23 +610,50 @@ export class ProductService {
       source: "guided_form",
     });
 
-    if (!existing) {
-      const nextVersion = (job.specificationVersions[0]?.version ?? 0) + 1;
-      await this.database.jobSpecificationVersion.create({
-        data: {
-          confirmedAt,
-          contentDigest: digest,
-          jobId: job.id,
-          sourceMetadata,
-          specification: toJson(parsed.data),
-          version: nextVersion,
-        },
+    await this.database.$transaction(async (transaction) => {
+      await transaction.$queryRaw(
+        Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${job.id}, 0))`,
+      );
+      const persistedVersion =
+        await transaction.jobSpecificationVersion.findUnique({
+          where: {
+            jobId_contentDigest: { contentDigest: digest, jobId: job.id },
+          },
+        });
+      if (persistedVersion === null) {
+        const concurrentRun = await transaction.negotiationRun.findFirst({
+          select: { id: true },
+          where: { jobId: job.id, status: { in: [...activeRunStatuses] } },
+        });
+        if (concurrentRun !== null) {
+          throw new ConflictException(
+            "A changed brief cannot be confirmed while a negotiation run is active.",
+          );
+        }
+        const latestVersion =
+          await transaction.jobSpecificationVersion.findFirst({
+            orderBy: { version: "desc" },
+            select: { version: true },
+            where: { jobId: job.id },
+          });
+        await transaction.jobSpecificationVersion.create({
+          data: {
+            confirmedAt,
+            contentDigest: digest,
+            jobId: job.id,
+            sourceMetadata,
+            specification: toJson(parsed.data),
+            version: (latestVersion?.version ?? 0) + 1,
+          },
+        });
+        await transaction.jobBusiness.deleteMany({
+          where: { jobId: job.id },
+        });
+      }
+      await transaction.job.update({
+        data: { confirmedAt, status: "READY" },
+        where: { id: job.id },
       });
-    }
-
-    await this.database.job.update({
-      data: { confirmedAt, status: "READY" },
-      where: { id: job.id },
     });
     await this.recordAudit(job.id, "job.specification.confirmed", {
       callingConsent: true,
@@ -591,10 +669,8 @@ export class ProductService {
     const version = this.requireConfirmedVersion(job);
 
     if (this.runtimeConfig.value.mode === "live") {
-      if (job.status === "DISCOVERING") return this.getCandidates(publicId);
-      if (job.candidates.length > 0) return this.getCandidates(publicId);
-
       const traceId = randomUUID();
+      const retryId = randomUUID();
       const envelope = createQueueJob(
         "business.discover",
         {
@@ -604,11 +680,46 @@ export class ProductService {
           specificationVersionId: version.id,
         },
         {
-          idempotencyKey: `job:${job.id}:discovery:${version.id}`,
+          idempotencyKey: `job:${job.id}:discovery:${version.id}:attempt:${retryId}`,
           traceId,
         },
       );
-      await this.database.$transaction(async (transaction) => {
+      const enqueued = await this.database.$transaction(async (transaction) => {
+        await transaction.$queryRaw(
+          Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${job.id}, 0))`,
+        );
+        const currentJob = await transaction.job.findUnique({
+          select: { confirmedAt: true, specification: true, status: true },
+          where: { id: job.id },
+        });
+        if (
+          currentJob === null ||
+          currentJob.confirmedAt === null ||
+          contentDigest(currentJob.specification) !== version.contentDigest
+        ) {
+          throw new ConflictException(
+            "Confirm the current brief before discovering businesses.",
+          );
+        }
+        if (currentJob.status === "DISCOVERING") return false;
+        const concurrentRun = await transaction.negotiationRun.findFirst({
+          select: { id: true },
+          where: { jobId: job.id, status: { in: [...activeRunStatuses] } },
+        });
+        if (concurrentRun !== null) {
+          throw new ConflictException(
+            "Business discovery cannot restart while a negotiation run is active.",
+          );
+        }
+        const candidateCount = await transaction.jobBusiness.count({
+          where: { jobId: job.id },
+        });
+        if (candidateCount >= 3) return false;
+        if (candidateCount > 0) {
+          await transaction.jobBusiness.deleteMany({
+            where: { jobId: job.id },
+          });
+        }
         await transaction.job.update({
           data: { status: "DISCOVERING" },
           where: { id: job.id },
@@ -624,8 +735,9 @@ export class ProductService {
             traceId,
           },
         });
+        return true;
       });
-      await this.outbox.publishPending(job.id);
+      if (enqueued) await this.outbox.publishPending(job.id);
       return this.getCandidates(publicId);
     }
 
@@ -719,6 +831,20 @@ export class ProductService {
       throw new BadRequestException("Select at least three businesses.");
     }
 
+    const uncallableBusinesses = selectedCandidates.filter(
+      (candidate) => profilePhone(candidate.business.phone) === null,
+    );
+    if (uncallableBusinesses.length > 0) {
+      throw new BadRequestException({
+        businessIds: uncallableBusinesses.map(
+          (candidate) => candidate.businessId,
+        ),
+        error: "uncallable_businesses",
+        message:
+          "Every selected business must have a callable E.164 phone number.",
+      });
+    }
+
     await this.database.jobBusiness.updateMany({
       data: { status: "SHORTLISTED" },
       where: { businessId: { in: selectedIds }, jobId: job.id },
@@ -748,6 +874,27 @@ export class ProductService {
 
   async getRun(runId: string): Promise<unknown> {
     const run = await this.findOwnedRun(runId);
+    const unretainedTranscriptCallIds = run.calls.flatMap((call) => {
+      if (call.transcriptText === null) return [];
+      if (!["CANCELLED", "COMPLETED", "FAILED"].includes(call.status)) {
+        return [];
+      }
+      const evidence = call.evidence.find((item) => item.kind === "TRANSCRIPT");
+      const evidenceExpired =
+        evidence !== undefined &&
+        evidence.retentionUntil !== null &&
+        evidence.retentionUntil.getTime() <= Date.now();
+      return evidenceExpired ||
+        transcriptExtractionSettled(call.structuredOutcome)
+        ? [call.id]
+        : [];
+    });
+    if (unretainedTranscriptCallIds.length > 0) {
+      await this.database.call.updateMany({
+        data: { transcriptText: null },
+        where: { id: { in: unretainedTranscriptCallIds }, runId: run.id },
+      });
+    }
     return this.presentRun(run);
   }
 
@@ -786,17 +933,75 @@ export class ProductService {
       );
     }
 
-    await this.database.negotiationRun.update({
-      data: {
-        pauseReason: "Paused by customer",
-        pausedAt: new Date(),
-        status: "PAUSED",
-      },
-      where: { id: run.id },
-    });
+    const pausedAt = new Date();
+    if (this.runtimeConfig.value.mode === "live") {
+      const traceId = randomUUID();
+      await this.database.$transaction(async (transaction) => {
+        const paused = await transaction.negotiationRun.updateMany({
+          data: {
+            pauseReason: "Paused by customer",
+            pausedAt,
+            status: "PAUSED",
+          },
+          where: { id: run.id, status: run.status },
+        });
+        if (paused.count === 0) {
+          throw new ConflictException(
+            `Run ${run.id} changed before it could be paused.`,
+          );
+        }
+        const registeredProviderCalls = await transaction.call.findMany({
+          select: { id: true, providerCallId: true },
+          where: {
+            providerCallId: { not: null },
+            runId: run.id,
+            status: { in: ["DIALING", "IN_PROGRESS", "NEGOTIATING"] },
+          },
+        });
+        for (const call of registeredProviderCalls) {
+          if (call.providerCallId === null) continue;
+          const envelope = createQueueJob(
+            "call.cancel",
+            {
+              callId: call.id,
+              providerCallId: call.providerCallId,
+              resumable: true,
+              runId: run.id,
+            },
+            {
+              idempotencyKey: `run:${run.id}:call:${call.id}:pause:${pausedAt.getTime()}`,
+              traceId,
+            },
+          );
+          await this.createOutboxEvent(
+            transaction,
+            run.id,
+            "NegotiationRun",
+            envelope,
+          );
+        }
+      });
+    } else {
+      const paused = await this.database.negotiationRun.updateMany({
+        data: {
+          pauseReason: "Paused by customer",
+          pausedAt,
+          status: "PAUSED",
+        },
+        where: { id: run.id, status: run.status },
+      });
+      if (paused.count === 0) {
+        throw new ConflictException(
+          `Run ${run.id} changed before it could be paused.`,
+        );
+      }
+    }
     await this.appendRunEvent(run.id, "run.paused", "USER", {
       reason: "Paused by customer",
     });
+    if (this.runtimeConfig.value.mode === "live") {
+      await this.outbox.publishPending(run.id);
+    }
     return this.getRun(run.id);
   }
 
@@ -812,19 +1017,35 @@ export class ProductService {
     if (this.runtimeConfig.value.mode === "live") {
       const traceId = randomUUID();
       await this.database.$transaction(async (transaction) => {
-        await transaction.negotiationRun.update({
+        const resumed = await transaction.negotiationRun.updateMany({
           data: { pauseReason: null, pausedAt: null, status: "CALLING" },
-          where: { id: run.id },
+          where: { id: run.id, status: "PAUSED" },
         });
+        if (resumed.count === 0) {
+          throw new ConflictException(
+            `Run ${run.id} changed before it could be resumed.`,
+          );
+        }
 
-        for (const call of run.calls) {
-          if (call.status !== "QUEUED" || call.providerCallId !== null)
-            continue;
-          const negotiation = await transaction.negotiation.findUnique({
-            where: { id: call.negotiationId ?? "" },
-          });
-          if (!negotiation) continue;
+        const resumableCalls = await transaction.call.findMany({
+          include: { negotiation: true },
+          where: {
+            providerCallId: null,
+            runId: run.id,
+            status: "QUEUED",
+          },
+        });
+        for (const call of resumableCalls) {
+          if (call.negotiation === null) continue;
           const nextAttempt = call.attempt + 1;
+          const negotiationMetadata = asRecord(call.negotiation.metadata);
+          const currentQuoteId = asString(negotiationMetadata.currentQuoteId);
+          const truthfulCompetingQuoteId = asString(
+            negotiationMetadata.truthfulCompetingQuoteId,
+          );
+          const hasTruthfulLeverage =
+            currentQuoteId !== undefined &&
+            truthfulCompetingQuoteId !== undefined;
           await transaction.call.update({
             data: { attempt: nextAttempt },
             where: { id: call.id },
@@ -834,9 +1055,14 @@ export class ProductService {
             {
               businessId: call.businessId,
               callId: call.id,
+              ...(hasTruthfulLeverage
+                ? { currentQuoteId, truthfulCompetingQuoteId }
+                : {}),
               runId: run.id,
               specificationVersionId: run.specificationVersionId,
-              strategy: statusName(negotiation.strategy) as NegotiationStrategy,
+              strategy: statusName(
+                call.negotiation.strategy,
+              ) as NegotiationStrategy,
             },
             {
               idempotencyKey: `run:${run.id}:call:${call.id}:resume:${nextAttempt}`,
@@ -850,14 +1076,33 @@ export class ProductService {
             envelope,
           );
         }
+        const rankEnvelope = createQueueJob(
+          "quote.rank",
+          { runId: run.id },
+          {
+            idempotencyKey: `run:${run.id}:rank:resume:${traceId}`,
+            traceId,
+          },
+        );
+        await this.createOutboxEvent(
+          transaction,
+          run.id,
+          "NegotiationRun",
+          rankEnvelope,
+        );
       });
       await this.appendRunEvent(run.id, "run.resumed", "USER", {});
       await this.outbox.publishPending(run.id);
     } else {
-      await this.database.negotiationRun.update({
+      const resumed = await this.database.negotiationRun.updateMany({
         data: { pauseReason: null, pausedAt: null, status: "CALLING" },
-        where: { id: run.id },
+        where: { id: run.id, status: "PAUSED" },
       });
+      if (resumed.count === 0) {
+        throw new ConflictException(
+          `Run ${run.id} changed before it could be resumed.`,
+        );
+      }
       await this.appendRunEvent(run.id, "run.resumed", "USER", {});
     }
     return this.getRun(run.id);
@@ -875,10 +1120,20 @@ export class ProductService {
     const cancelledAt = new Date();
     const traceId = randomUUID();
     await this.database.$transaction(async (transaction) => {
-      await transaction.negotiationRun.update({
+      const cancelled = await transaction.negotiationRun.updateMany({
         data: { cancelledAt, status: "CANCELLED" },
-        where: { id: run.id },
+        where: {
+          id: run.id,
+          status: {
+            notIn: ["CANCELLED", "COMPLETED", "FAILED", "PARTIALLY_COMPLETED"],
+          },
+        },
       });
+      if (cancelled.count === 0) {
+        throw new ConflictException(
+          `Run ${run.id} changed before it could be cancelled.`,
+        );
+      }
       await transaction.call.updateMany({
         data: { endedAt: cancelledAt, status: "CANCELLED" },
         where: {
@@ -894,16 +1149,23 @@ export class ProductService {
       });
 
       if (this.runtimeConfig.value.mode === "live") {
-        for (const call of run.calls) {
-          if (
-            call.providerCallId === null ||
-            !["DIALING", "IN_PROGRESS", "NEGOTIATING"].includes(call.status)
-          ) {
-            continue;
-          }
+        const registeredProviderCalls = await transaction.call.findMany({
+          select: { id: true, providerCallId: true },
+          where: {
+            providerCallId: { not: null },
+            runId: run.id,
+            status: "CANCELLED",
+          },
+        });
+        for (const call of registeredProviderCalls) {
+          if (call.providerCallId === null) continue;
           const envelope = createQueueJob(
             "call.cancel",
-            { callId: call.id, runId: run.id },
+            {
+              callId: call.id,
+              providerCallId: call.providerCallId,
+              runId: run.id,
+            },
             {
               idempotencyKey: `run:${run.id}:call:${call.id}:cancel`,
               traceId,
@@ -932,12 +1194,11 @@ export class ProductService {
       );
     }
 
-    if (currentRunQuotes(run).length === 0) {
+    if (currentRunQuotes(run).length === 0 || run.recommendation === null) {
       throw new ConflictException("A report is not ready until quotes exist.");
     }
 
-    const report = await this.buildAndPersistReport(run);
-    return report;
+    return this.presentPersistedReport(run);
   }
 
   async saveDecision(runId: string, dto: SaveDecisionDto): Promise<unknown> {
@@ -957,14 +1218,11 @@ export class ProductService {
       );
     }
 
-    const report = await this.buildAndPersistReport(run);
-    const recommendation = await this.database.recommendation.findUnique({
-      where: { runId: run.id },
-    });
-
-    if (!recommendation) {
+    const recommendation = run.recommendation;
+    if (recommendation === null) {
       throw new ConflictException("The recommendation is not ready.");
     }
+    const report = this.presentPersistedReport(run);
 
     const decidedAt = new Date();
     const decision = await this.database.decision.upsert({
@@ -1177,21 +1435,43 @@ export class ProductService {
     },
   ): Promise<unknown> {
     const job = await this.findOwnedJob(publicId);
-    const current = asRecord(job.specification);
     const facts = extraction.facts;
-    const merged = {
-      ...current,
-      ...facts,
-      vertical: "moving",
-    };
-
-    await this.database.job.update({
-      data: {
-        confirmedAt: null,
-        specification: toJson(merged),
-        status: "DRAFT",
-      },
-      where: { id: job.id },
+    await this.database.$transaction(async (transaction) => {
+      await transaction.$queryRaw(
+        Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${job.id}, 0))`,
+      );
+      const concurrentRun = await transaction.negotiationRun.findFirst({
+        select: { id: true },
+        where: { jobId: job.id, status: { in: [...activeRunStatuses] } },
+      });
+      if (concurrentRun !== null) {
+        throw new ConflictException(
+          "Intake cannot change the brief while a negotiation run is active.",
+        );
+      }
+      const currentJob = await transaction.job.findUnique({
+        select: { specification: true },
+        where: { id: job.id },
+      });
+      if (currentJob === null) {
+        throw new NotFoundException(`Job ${publicId} was not found.`);
+      }
+      const merged = {
+        ...asRecord(currentJob.specification),
+        ...facts,
+        vertical: "moving",
+      };
+      await transaction.job.update({
+        data: {
+          confirmedAt: null,
+          specification: toJson(merged),
+          status: "DRAFT",
+        },
+        where: { id: job.id },
+      });
+      await transaction.jobBusiness.deleteMany({
+        where: { jobId: job.id },
+      });
     });
     await this.recordAudit(job.id, `intake.${source.kind}.extracted`, {
       confidence: extraction.confidence,
@@ -1620,7 +1900,7 @@ export class ProductService {
       status: "completed",
     });
     const completeRun = await this.findRunInternal(run.id);
-    await this.buildAndPersistReport(completeRun);
+    await this.buildAndPersistFixtureReport(completeRun);
     await this.appendRunEvent(run.id, "recommendation.ready", "WORKER", {});
 
     return run;
@@ -1799,7 +2079,7 @@ export class ProductService {
     return run;
   }
 
-  private async buildAndPersistReport(run: RunRecord) {
+  private async buildAndPersistFixtureReport(run: RunRecord) {
     const quotes = currentRunQuotes(run);
     const candidates = quotes.map((quote) => ({
       business: {
@@ -1912,6 +2192,102 @@ export class ProductService {
     };
   }
 
+  private presentPersistedReport(run: RunRecord) {
+    const recommendation = run.recommendation;
+    if (recommendation === null) {
+      throw new ConflictException("The recommendation is not ready.");
+    }
+
+    const quotes = currentRunQuotes(run);
+    const quoteById = new Map(quotes.map((quote) => [quote.id, quote]));
+    const rankedQuoteIds = jsonStringList(recommendation.rankedQuoteIds);
+    if (
+      rankedQuoteIds.length === 0 ||
+      new Set(rankedQuoteIds).size !== rankedQuoteIds.length ||
+      rankedQuoteIds.some((quoteId) => !quoteById.has(quoteId))
+    ) {
+      throw new ConflictException(
+        "The persisted recommendation is incomplete for this report.",
+      );
+    }
+
+    const factors = Array.isArray(recommendation.factors)
+      ? recommendation.factors.map((factor) => asRecord(factor))
+      : [];
+    const factorByQuoteId = new Map(
+      factors.flatMap((factor) => {
+        const quoteId = asString(factor.quoteId);
+        return quoteId === undefined ? [] : [[quoteId, factor] as const];
+      }),
+    );
+    const bestQuote =
+      recommendation.bestQuoteId === null
+        ? undefined
+        : quoteById.get(recommendation.bestQuoteId);
+    if (recommendation.bestQuoteId !== null && bestQuote === undefined) {
+      throw new ConflictException(
+        "The persisted recommendation references an unavailable quote.",
+      );
+    }
+    const bestFactor =
+      recommendation.bestQuoteId === null
+        ? undefined
+        : factorByQuoteId.get(recommendation.bestQuoteId);
+    const bestScore =
+      asFiniteNumber(bestFactor?.totalScore) ??
+      (bestQuote?.score === null || bestQuote?.score === undefined
+        ? 0
+        : Number(bestQuote.score));
+
+    return {
+      decision: run.decision
+        ? {
+            decidedAt: run.decision.decidedAt.toISOString(),
+            outcome: statusName(run.decision.outcome),
+            quoteId: run.decision.selectedQuoteId,
+            savedAt: run.decision.decidedAt.toISOString(),
+          }
+        : null,
+      metrics: presentRunMetrics(run, recommendation.savingsAmountCents ?? 0),
+      mode: this.runtimeConfig.value.mode,
+      rankedOffers: rankedQuoteIds.map((quoteId, index) => {
+        const quote = quoteById.get(quoteId);
+        if (quote === undefined) {
+          throw new ConflictException(
+            "The persisted recommendation is incomplete for this report.",
+          );
+        }
+        const factor = factorByQuoteId.get(quoteId);
+        const rank = asFiniteNumber(factor?.rank) ?? index + 1;
+        const factorScore = asFiniteNumber(factor?.totalScore);
+        return {
+          ...presentQuote(quote),
+          rank,
+          rationale:
+            rank === 1
+              ? factorScore === undefined
+                ? "Strongest verified value across price, completeness, confidence, reputation, and risk."
+                : `Ranked first after earning the persisted evidence-weighted score of ${factorScore}.`
+              : `Ranked ${rank} in the finalized worker comparison.`,
+        };
+      }),
+      recommendation: {
+        businessName: bestQuote?.business.name ?? "No verified business",
+        confidence: Number(Math.min(1, bestScore / 100).toFixed(4)),
+        explanation: recommendation.explanation,
+        quoteId: recommendation.bestQuoteId ?? "",
+        rationale:
+          bestQuote === undefined
+            ? "No eligible quote is available."
+            : `Finalized by ${recommendation.policyVersion} with an evidence-weighted score of ${bestScore}.`,
+        savingsCents: recommendation.savingsAmountCents ?? 0,
+        totalCents: bestQuote?.totalAmountCents ?? 0,
+      },
+      runId: run.id,
+      status: statusName(run.status),
+    };
+  }
+
   private presentRun(run: RunRecord): unknown {
     const quotes = currentRunQuotes(run);
     return {
@@ -1940,7 +2316,7 @@ export class ProductService {
           outcome: asString(asRecord(call.structuredOutcome).outcome) ?? null,
           progress: callProgress(call.status),
           status: statusName(call.status),
-          transcript: call.transcriptText ?? "",
+          transcript: retainedTranscript(call),
         };
       }),
       decision: run.decision
@@ -1971,30 +2347,49 @@ export class ProductService {
     actor: "API" | "PROVIDER" | "SYSTEM" | "USER" | "WORKER",
     payload: unknown,
   ): Promise<void> {
-    const lastEvent = await this.database.runEvent.findFirst({
-      orderBy: { sequence: "desc" },
-      where: { runId },
-    });
-    const run = await this.database.negotiationRun.findUnique({
-      select: { correlationId: true },
-      where: { id: runId },
-    });
+    const maximumAttempts = 5;
+    const eventPayload = toJson(payload);
 
-    if (!run) throw new NotFoundException(`Run ${runId} was not found.`);
+    for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
+      try {
+        await this.database.$transaction(async (transaction) => {
+          const [lastEvent, run] = await Promise.all([
+            transaction.runEvent.findFirst({
+              orderBy: { sequence: "desc" },
+              where: { runId },
+            }),
+            transaction.negotiationRun.findUnique({
+              select: { correlationId: true },
+              where: { id: runId },
+            }),
+          ]);
 
-    const sequence = (lastEvent?.sequence ?? 0) + 1;
-    await this.database.runEvent.create({
-      data: {
-        actor,
-        correlationId: run.correlationId,
-        eventType,
-        id: `${runId}-event-${sequence}`,
-        occurredAt: new Date(),
-        payload: toJson(payload),
-        runId,
-        sequence,
-      },
-    });
+          if (!run) {
+            throw new NotFoundException(`Run ${runId} was not found.`);
+          }
+
+          const sequence = (lastEvent?.sequence ?? 0) + 1;
+          await transaction.runEvent.create({
+            data: {
+              actor,
+              correlationId: run.correlationId,
+              eventType,
+              id: `${runId}-event-${sequence}`,
+              occurredAt: new Date(),
+              payload: eventPayload,
+              runId,
+              sequence,
+            },
+          });
+        });
+        return;
+      } catch (error) {
+        const sequenceConflict =
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === "P2002";
+        if (!sequenceConflict || attempt === maximumAttempts) throw error;
+      }
+    }
   }
 
   private async recordAudit(

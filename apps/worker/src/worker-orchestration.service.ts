@@ -29,6 +29,7 @@ import {
 } from "@relay/database";
 import { rankQuotes } from "@relay/domain";
 import type {
+  CallProvider,
   ProviderFailure,
   ProviderRequestContext,
   ProviderResult,
@@ -68,6 +69,10 @@ const TERMINAL_RUN_STATUSES = new Set<NegotiationRunStatus>([
   NegotiationRunStatus.FAILED,
   NegotiationRunStatus.PARTIALLY_COMPLETED,
 ]);
+const CALL_STARTABLE_RUN_STATUSES = [
+  NegotiationRunStatus.QUEUED,
+  NegotiationRunStatus.CALLING,
+] as const;
 
 const rankingRunInclude = {
   calls: true,
@@ -164,6 +169,11 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0
     ? value.trim()
     : undefined;
+}
+
+function extractionIsSettled(value: unknown): boolean {
+  const extraction = asRecord(value).extraction;
+  return ["completed", "failed", "skipped"].includes(String(extraction));
 }
 
 export function classifyNonQuoteOutcome(
@@ -768,12 +778,86 @@ export class WorkerOrchestrationService {
       );
     }
     const run = call.run;
-    if (TERMINAL_RUN_STATUSES.has(call.run.status)) return;
-    if (call.run.status === NegotiationRunStatus.PAUSED) return;
+    if (run.status === NegotiationRunStatus.PAUSED) {
+      if (
+        call.providerCallId !== null &&
+        call.status !== DatabaseCallStatus.COMPLETED &&
+        call.status !== DatabaseCallStatus.FAILED
+      ) {
+        await this.pauseRegisteredProviderCall(
+          {
+            id: call.id,
+            providerCallId: call.providerCallId,
+            structuredOutcome: call.structuredOutcome,
+          },
+          envelope.payload,
+          run.id,
+          provider,
+          envelope,
+          context,
+        );
+      } else if (
+        call.providerCallId === null &&
+        call.status === DatabaseCallStatus.DIALING
+      ) {
+        const restored = await this.restorePausedCallClaim(call.id);
+        if (!restored) {
+          const failure = {
+            code: "unavailable",
+            message:
+              "The provider may have accepted the previous call start, so Relay will not place a duplicate.",
+            provider: provider.name,
+            retryable: false,
+          } as const satisfies ProviderFailure;
+          if (await this.failCallStart(call.id, run.id, failure, envelope)) {
+            await this.enqueueRank(
+              run.id,
+              `call-start-uncertain:${call.id}`,
+              envelope.traceId,
+            );
+          }
+        }
+      }
+      return;
+    }
+    if (TERMINAL_RUN_STATUSES.has(run.status)) {
+      if (
+        call.providerCallId === null ||
+        call.status === DatabaseCallStatus.COMPLETED ||
+        call.status === DatabaseCallStatus.FAILED
+      ) {
+        return;
+      }
+      if (call.status !== DatabaseCallStatus.CANCELLED) {
+        await client.call.updateMany({
+          data: {
+            endedAt: call.endedAt ?? new Date(),
+            status: DatabaseCallStatus.CANCELLED,
+          },
+          where: {
+            id: call.id,
+            providerCallId: call.providerCallId,
+            status: { notIn: [...TERMINAL_CALL_STATUSES] },
+          },
+        });
+      }
+      await this.cancelRegisteredProviderCall(
+        {
+          id: call.id,
+          providerCallId: call.providerCallId,
+          structuredOutcome: call.structuredOutcome,
+        },
+        run.id,
+        provider,
+        envelope,
+        context,
+      );
+      return;
+    }
     if (
-      call.run.callingConsentAt === null ||
-      call.run.aiDisclosureAcknowledgedAt === null ||
-      call.run.recordingConsentAt === null
+      run.callingConsentAt === null ||
+      run.aiDisclosureAcknowledgedAt === null ||
+      run.recordingConsentAt === null
     ) {
       throw new NonRetryableQueueError(
         "Calling, recording, and AI disclosure consent are required before a provider call.",
@@ -783,7 +867,7 @@ export class WorkerOrchestrationService {
       if (!TERMINAL_CALL_STATUSES.has(call.status)) {
         await this.enqueueOutcomePoll(
           call.id,
-          call.run.id,
+          run.id,
           call.providerCallId,
           envelope.traceId,
         );
@@ -802,9 +886,18 @@ export class WorkerOrchestrationService {
           provider: provider.name,
           retryable: false,
         } as const satisfies ProviderFailure;
-        await this.failCallStart(call.id, call.run.id, failure, envelope);
+        const failed = await this.failCallStart(
+          call.id,
+          run.id,
+          failure,
+          envelope,
+        );
+        if (!failed) {
+          await this.restorePausedCallClaim(call.id);
+          return;
+        }
         await this.enqueueRank(
-          call.run.id,
+          run.id,
           `call-start-uncertain:${call.id}`,
           envelope.traceId,
         );
@@ -819,7 +912,7 @@ export class WorkerOrchestrationService {
       currentQuoteId: envelope.payload.currentQuoteId,
       expectedCurrency: call.job.currency,
       negotiationId: call.negotiationId,
-      runId: call.run.id,
+      runId: run.id,
       truthfulCompetingQuoteId: envelope.payload.truthfulCompetingQuoteId,
     });
 
@@ -833,13 +926,14 @@ export class WorkerOrchestrationService {
       where: {
         id: call.id,
         providerCallId: null,
+        run: { status: { in: [...CALL_STARTABLE_RUN_STATUSES] } },
         status: DatabaseCallStatus.QUEUED,
       },
     });
     if (claimed.count === 0) return;
 
     const specification = this.parseSpecification(
-      call.run.specificationVersion.specification,
+      run.specificationVersion.specification,
     );
     const business = businessContract(call.business);
     const callbackBaseUrl = this.configuration.api.publicUrl;
@@ -868,17 +962,35 @@ export class WorkerOrchestrationService {
       const safeToRetry =
         started.error.retryable && started.error.code === "rate-limited";
       if (safeToRetry && context.attempt < context.attemptsAllowed) {
-        await client.call.update({
+        const released = await client.call.updateMany({
           data: {
             failureCode: started.error.code,
             failureMessage: started.error.message,
             status: DatabaseCallStatus.QUEUED,
           },
-          where: { id: call.id },
+          where: {
+            id: call.id,
+            providerCallId: null,
+            run: { status: { in: [...CALL_STARTABLE_RUN_STATUSES] } },
+            status: DatabaseCallStatus.DIALING,
+          },
         });
+        if (released.count === 0) {
+          await this.restorePausedCallClaim(call.id);
+          return;
+        }
         throw new ProviderOperationError(started.error);
       }
-      await this.failCallStart(call.id, call.run.id, started.error, envelope);
+      const failed = await this.failCallStart(
+        call.id,
+        run.id,
+        started.error,
+        envelope,
+      );
+      if (!failed) {
+        await this.restorePausedCallClaim(call.id);
+        return;
+      }
       await this.enqueueRank(
         run.id,
         `call-start-failed:${call.id}`,
@@ -892,34 +1004,112 @@ export class WorkerOrchestrationService {
     }
 
     const submittedAt = new Date(started.value.submittedAt);
-    await client.$transaction([
-      client.call.update({
+    const registeredCall = await client.$transaction(async (transaction) => {
+      const activatedRun = await transaction.negotiationRun.updateMany({
         data: {
-          aiDisclosureMadeAt: submittedAt,
-          providerCallId: started.value.providerCallId,
-          recordingConsentAt: call.run.recordingConsentAt,
-          startedAt: submittedAt,
-          status: DatabaseCallStatus.DIALING,
-        },
-        where: { id: call.id },
-      }),
-      client.negotiationRun.updateMany({
-        data: {
-          startedAt: call.run.startedAt ?? submittedAt,
+          startedAt: run.startedAt ?? submittedAt,
           status: NegotiationRunStatus.CALLING,
         },
         where: {
-          id: call.run.id,
-          status: { notIn: [...TERMINAL_RUN_STATUSES] },
+          id: run.id,
+          status: { in: [...CALL_STARTABLE_RUN_STATUSES] },
         },
-      }),
-      client.job.update({
-        data: { status: JobStatus.CALLING },
-        where: { id: call.jobId },
-      }),
-    ]);
+      });
+      await transaction.call.updateMany({
+        data: {
+          aiDisclosureMadeAt: submittedAt,
+          providerCallId: started.value.providerCallId,
+          recordingConsentAt: run.recordingConsentAt,
+          startedAt: submittedAt,
+        },
+        where: {
+          id: call.id,
+          providerCallId: null,
+        },
+      });
+      if (activatedRun.count > 0) {
+        await transaction.job.updateMany({
+          data: { status: JobStatus.CALLING },
+          where: {
+            id: call.jobId,
+            status: {
+              notIn: [
+                JobStatus.CANCELLED,
+                JobStatus.COMPLETED,
+                JobStatus.FAILED,
+              ],
+            },
+          },
+        });
+      }
+      return transaction.call.findUnique({
+        include: { run: { select: { status: true } } },
+        where: { id: call.id },
+      });
+    });
+    if (
+      registeredCall === null ||
+      registeredCall.providerCallId !== started.value.providerCallId
+    ) {
+      const cancellation = await provider.cancelCall(
+        started.value.providerCallId,
+        this.providerContext(envelope, context),
+      );
+      if (!cancellation.ok && cancellation.error.code !== "not-found") {
+        this.throwProviderFailure(cancellation.error);
+      }
+      throw new NonRetryableQueueError(
+        "The provider call could not be registered and was cancelled to prevent an orphaned call.",
+      );
+    }
+    if (registeredCall.run?.status === NegotiationRunStatus.PAUSED) {
+      await this.pauseRegisteredProviderCall(
+        {
+          id: registeredCall.id,
+          providerCallId: started.value.providerCallId,
+          structuredOutcome: registeredCall.structuredOutcome,
+        },
+        envelope.payload,
+        run.id,
+        provider,
+        envelope,
+        context,
+      );
+      return;
+    }
+    if (
+      registeredCall.status === DatabaseCallStatus.CANCELLED ||
+      registeredCall.run === null ||
+      TERMINAL_RUN_STATUSES.has(registeredCall.run.status)
+    ) {
+      if (!TERMINAL_CALL_STATUSES.has(registeredCall.status)) {
+        await client.call.updateMany({
+          data: {
+            endedAt: new Date(),
+            status: DatabaseCallStatus.CANCELLED,
+          },
+          where: {
+            id: registeredCall.id,
+            providerCallId: registeredCall.providerCallId,
+            status: { notIn: [...TERMINAL_CALL_STATUSES] },
+          },
+        });
+      }
+      await this.cancelRegisteredProviderCall(
+        {
+          id: registeredCall.id,
+          providerCallId: started.value.providerCallId,
+          structuredOutcome: registeredCall.structuredOutcome,
+        },
+        run.id,
+        provider,
+        envelope,
+        context,
+      );
+      return;
+    }
     await this.appendRunEvent(
-      call.run.id,
+      run.id,
       "call.started",
       AuditActor.PROVIDER,
       { businessId: call.businessId, callId: call.id, provider: provider.name },
@@ -927,7 +1117,7 @@ export class WorkerOrchestrationService {
     );
     await this.enqueueOutcomePoll(
       call.id,
-      call.run.id,
+      run.id,
       started.value.providerCallId,
       envelope.traceId,
     );
@@ -944,12 +1134,62 @@ export class WorkerOrchestrationService {
     );
     const client = this.database.client;
     const call = await client.call.findUnique({
+      include: { negotiation: true, run: true },
       where: { id: envelope.payload.callId },
     });
-    if (call === null || call.runId !== envelope.payload.runId) {
+    if (
+      call === null ||
+      call.run === null ||
+      call.runId !== envelope.payload.runId
+    ) {
       throw new NonRetryableQueueError(
         "The cancellation job does not match its call run.",
       );
+    }
+    const providerCallId =
+      envelope.payload.providerCallId ?? call.providerCallId;
+    if (providerCallId === null) return;
+    if (
+      envelope.payload.providerCallId !== undefined &&
+      envelope.payload.providerCallId !== call.providerCallId
+    ) {
+      const cancellationHistory = Array.isArray(
+        asRecord(call.structuredOutcome).pausedProviderCancellations,
+      )
+        ? (asRecord(call.structuredOutcome)
+            .pausedProviderCancellations as unknown[])
+        : [];
+      const isKnownPausedSession = cancellationHistory.some(
+        (entry) =>
+          optionalString(asRecord(entry).providerCallId) === providerCallId,
+      );
+      if (
+        envelope.payload.resumable !== true ||
+        call.providerCallId !== null ||
+        !isKnownPausedSession
+      ) {
+        return;
+      }
+    }
+
+    if (
+      envelope.payload.resumable === true &&
+      (call.run.status === NegotiationRunStatus.PAUSED ||
+        call.run.status === NegotiationRunStatus.CALLING)
+    ) {
+      await this.pauseRegisteredProviderCall(
+        {
+          id: call.id,
+          providerCallId,
+          structuredOutcome: call.structuredOutcome,
+        },
+        this.callPlacementPayload(call, call.run),
+        call.runId,
+        provider,
+        envelope,
+        context,
+      );
+      return;
     }
     if (call.status !== DatabaseCallStatus.CANCELLED) {
       throw new NonRetryableQueueError(
@@ -959,34 +1199,16 @@ export class WorkerOrchestrationService {
     const outcome = asRecord(call.structuredOutcome);
     if (optionalString(outcome.providerCancellationCompletedAt) !== undefined)
       return;
-    if (call.providerCallId === null) return;
-
-    const result = await provider.cancelCall(
-      call.providerCallId,
-      this.providerContext(envelope, context),
-    );
-    if (!result.ok && result.error.code !== "not-found") {
-      this.throwProviderFailure(result.error);
-    }
-    await client.call.update({
-      data: {
-        structuredOutcome: mergeJson(call.structuredOutcome, {
-          providerCancellationCompletedAt: new Date().toISOString(),
-        }),
+    await this.cancelRegisteredProviderCall(
+      {
+        id: call.id,
+        providerCallId,
+        structuredOutcome: call.structuredOutcome,
       },
-      where: { id: call.id },
-    });
-    await this.appendRunEvent(
-      envelope.payload.runId,
-      "call.updated",
-      AuditActor.WORKER,
-      { callId: call.id, status: "cancelled" },
-      `${envelope.idempotencyKey}:provider-cancelled`,
-    );
-    await this.enqueueRank(
       call.runId,
-      `cancelled:${call.id}`,
-      envelope.traceId,
+      provider,
+      envelope,
+      context,
     );
   }
 
@@ -994,10 +1216,32 @@ export class WorkerOrchestrationService {
     envelope: QueueJobEnvelope<"call.outcome.process">,
     context: QueueProcessingContext,
   ): Promise<void> {
+    try {
+      await this.processCallOutcomeAttempt(envelope, context);
+    } catch (error) {
+      if (
+        !(error instanceof CallStillInProgressError) &&
+        (error instanceof NonRetryableQueueError ||
+          context.attempt >= context.attemptsAllowed)
+      ) {
+        await this.compensateCallProcessingFailure(envelope, error, context);
+      }
+      throw error;
+    }
+  }
+
+  private async processCallOutcomeAttempt(
+    envelope: QueueJobEnvelope<"call.outcome.process">,
+    context: QueueProcessingContext,
+  ): Promise<void> {
     const provider = this.requireProvider(this.providers.calls, "call status");
     const client = this.database.client;
     let call = await client.call.findUnique({
-      include: { job: { include: { user: true } }, run: true },
+      include: {
+        job: { include: { user: true } },
+        negotiation: true,
+        run: true,
+      },
       where: { id: envelope.payload.callId },
     });
     if (
@@ -1010,12 +1254,93 @@ export class WorkerOrchestrationService {
       );
     }
     if (call.providerCallId === null) {
+      if (
+        call.status === DatabaseCallStatus.QUEUED ||
+        TERMINAL_CALL_STATUSES.has(call.status)
+      ) {
+        return;
+      }
       throw new NonRetryableQueueError(
         "The call has no registered provider identifier.",
       );
     }
+    const polledProviderCallId = envelope.payload.providerEventId.startsWith(
+      "poll:",
+    )
+      ? envelope.payload.providerEventId.slice("poll:".length)
+      : undefined;
+    if (
+      polledProviderCallId !== undefined &&
+      polledProviderCallId !== call.providerCallId
+    ) {
+      return;
+    }
     const run = call.run;
     const providerCallId = call.providerCallId;
+
+    if (
+      run.status === NegotiationRunStatus.PAUSED &&
+      call.status !== DatabaseCallStatus.COMPLETED &&
+      call.status !== DatabaseCallStatus.FAILED
+    ) {
+      await this.pauseRegisteredProviderCall(
+        {
+          id: call.id,
+          providerCallId,
+          structuredOutcome: call.structuredOutcome,
+        },
+        this.callPlacementPayload(call, run),
+        run.id,
+        provider,
+        envelope,
+        context,
+      );
+      return;
+    }
+    if (
+      call.status === DatabaseCallStatus.CANCELLED ||
+      run.status === NegotiationRunStatus.CANCELLED
+    ) {
+      if (call.status !== DatabaseCallStatus.CANCELLED) {
+        await client.call.update({
+          data: {
+            endedAt: call.endedAt ?? new Date(),
+            status: DatabaseCallStatus.CANCELLED,
+          },
+          where: { id: call.id },
+        });
+        call = { ...call, status: DatabaseCallStatus.CANCELLED };
+      }
+      await this.cancelRegisteredProviderCall(
+        {
+          id: call.id,
+          providerCallId,
+          structuredOutcome: call.structuredOutcome,
+        },
+        run.id,
+        provider,
+        envelope,
+        context,
+      );
+      return;
+    }
+    if (
+      TERMINAL_CALL_STATUSES.has(call.status) &&
+      extractionIsSettled(call.structuredOutcome)
+    ) {
+      if (call.transcriptText !== null) {
+        await client.call.update({
+          data: { transcriptText: null },
+          where: { id: call.id },
+        });
+      }
+      await this.enqueueRank(
+        run.id,
+        `terminal-processed:${call.id}`,
+        envelope.traceId,
+      );
+      return;
+    }
 
     const claimMarker = `OUTCOME_PROCESSING:${envelope.idempotencyKey}`;
     if (
@@ -1096,6 +1421,14 @@ export class WorkerOrchestrationService {
 
     if (!TERMINAL_CALL_STATUSES.has(status)) {
       await this.releaseOutcomeClaim(call.id, claimMarker);
+      if (context.attempt >= context.attemptsAllowed) {
+        await this.compensateCallProcessingFailure(
+          envelope,
+          new Error("The provider call outcome polling window expired."),
+          context,
+        );
+        return;
+      }
       throw new CallStillInProgressError(status);
     }
     if (status !== DatabaseCallStatus.COMPLETED) {
@@ -1110,6 +1443,7 @@ export class WorkerOrchestrationService {
             outcome:
               status === DatabaseCallStatus.CANCELLED ? "cancelled" : "failed",
           }),
+          transcriptText: null,
         },
         where: { id: call.id },
       });
@@ -1194,6 +1528,7 @@ export class WorkerOrchestrationService {
               ...(recordingKey === undefined ? {} : { recordingKey }),
               ...(transcriptKey === undefined ? {} : { transcriptKey }),
             }),
+            transcriptText: null,
           },
           where: { id: call.id },
         }),
@@ -1239,6 +1574,7 @@ export class WorkerOrchestrationService {
               ? {}
               : { recordingFailureCode: recordingFailure.code }),
           }),
+          transcriptText: null,
         },
         where: { id: call.id },
       });
@@ -1292,6 +1628,23 @@ export class WorkerOrchestrationService {
     envelope: QueueJobEnvelope<"quote.normalize">,
     context: QueueProcessingContext,
   ): Promise<void> {
+    try {
+      await this.normalizeQuoteAttempt(envelope, context);
+    } catch (error) {
+      if (
+        error instanceof NonRetryableQueueError ||
+        context.attempt >= context.attemptsAllowed
+      ) {
+        await this.compensateQuoteProcessingFailure(envelope, error);
+      }
+      throw error;
+    }
+  }
+
+  private async normalizeQuoteAttempt(
+    envelope: QueueJobEnvelope<"quote.normalize">,
+    context: QueueProcessingContext,
+  ): Promise<void> {
     const extraction = this.requireProvider(
       this.providers.extraction,
       "quote extraction",
@@ -1301,6 +1654,10 @@ export class WorkerOrchestrationService {
       where: { id: envelope.payload.quoteId },
     });
     if (existing !== null) {
+      await client.call.updateMany({
+        data: { transcriptText: null },
+        where: { id: envelope.payload.callId, runId: envelope.payload.runId },
+      });
       await this.enqueueRank(
         envelope.payload.runId,
         `normalized:${existing.id}`,
@@ -1374,6 +1731,7 @@ export class WorkerOrchestrationService {
             extraction: "failed",
             extractionFailureCode: result.error.code,
           }),
+          transcriptText: null,
         },
         where: { id: call.id },
       });
@@ -1499,6 +1857,7 @@ export class WorkerOrchestrationService {
             outcome: "quote_received",
             quoteId: quote.id,
           }),
+          transcriptText: null,
         },
         where: { id: call.id },
       });
@@ -1540,7 +1899,11 @@ export class WorkerOrchestrationService {
     if (run === null) {
       throw new NonRetryableQueueError("The quote ranking run does not exist.");
     }
-    if (run.status === NegotiationRunStatus.CANCELLED) return;
+    if (
+      run.status === NegotiationRunStatus.CANCELLED ||
+      run.status === NegotiationRunStatus.PAUSED
+    )
+      return;
 
     const activeQuoteIds = selectLatestActiveQuoteIds(run.quotes);
     const activeQuotes = run.quotes.filter((quote) =>
@@ -1675,8 +2038,8 @@ export class WorkerOrchestrationService {
           ? NegotiationRunStatus.PARTIALLY_COMPLETED
           : NegotiationRunStatus.COMPLETED;
     const completedAt = new Date();
-    await client.$transaction([
-      client.negotiationRun.update({
+    const finalized = await client.$transaction(async (transaction) => {
+      const terminalized = await transaction.negotiationRun.updateMany({
         data: {
           completedAt,
           failureCode:
@@ -1689,9 +2052,19 @@ export class WorkerOrchestrationService {
               : null,
           status: terminalStatus,
         },
-        where: { id: run.id },
-      }),
-      client.job.update({
+        where: {
+          id: run.id,
+          status: {
+            in: [
+              NegotiationRunStatus.QUEUED,
+              NegotiationRunStatus.CALLING,
+              NegotiationRunStatus.COMPARING,
+            ],
+          },
+        },
+      });
+      if (terminalized.count === 0) return false;
+      await transaction.job.updateMany({
         data: {
           completedAt,
           status:
@@ -1699,9 +2072,16 @@ export class WorkerOrchestrationService {
               ? JobStatus.FAILED
               : JobStatus.COMPLETED,
         },
-        where: { id: run.jobId },
-      }),
-    ]);
+        where: {
+          id: run.jobId,
+          status: {
+            notIn: [JobStatus.CANCELLED, JobStatus.COMPLETED, JobStatus.FAILED],
+          },
+        },
+      });
+      return true;
+    });
+    if (!finalized) return;
     await this.appendRunEvent(
       run.id,
       "run.status_changed",
@@ -2095,6 +2475,45 @@ export class WorkerOrchestrationService {
     return parsed.data;
   }
 
+  private callPlacementPayload(
+    call: {
+      readonly businessId: string;
+      readonly id: string;
+      readonly negotiation: {
+        readonly metadata: Prisma.JsonValue | null;
+        readonly strategy: DatabaseNegotiationStrategy;
+      } | null;
+    },
+    run: {
+      readonly id: string;
+      readonly specificationVersionId: string;
+    },
+  ): QueueJobEnvelope<"call.place">["payload"] {
+    if (call.negotiation === null) {
+      throw new NonRetryableQueueError(
+        "A paused call cannot resume without its negotiation strategy.",
+      );
+    }
+    const metadata = asRecord(call.negotiation.metadata);
+    const currentQuoteId = optionalString(metadata.currentQuoteId);
+    const truthfulCompetingQuoteId = optionalString(
+      metadata.truthfulCompetingQuoteId,
+    );
+    const hasTruthfulLeverage =
+      currentQuoteId !== undefined && truthfulCompetingQuoteId !== undefined;
+
+    return {
+      businessId: call.businessId,
+      callId: call.id,
+      ...(hasTruthfulLeverage
+        ? { currentQuoteId, truthfulCompetingQuoteId }
+        : {}),
+      runId: run.id,
+      specificationVersionId: run.specificationVersionId,
+      strategy: contractStrategy(call.negotiation.strategy),
+    };
+  }
+
   private providerContext(
     envelope: QueueJobEnvelope,
     context: QueueProcessingContext,
@@ -2166,8 +2585,8 @@ export class WorkerOrchestrationService {
     runId: string,
     failure: ProviderFailure,
     envelope: QueueJobEnvelope<"call.place">,
-  ): Promise<void> {
-    await this.client.call.update({
+  ): Promise<boolean> {
+    const failed = await this.client.call.updateMany({
       data: {
         endedAt: new Date(),
         failureCode:
@@ -2178,14 +2597,198 @@ export class WorkerOrchestrationService {
         status: DatabaseCallStatus.FAILED,
         structuredOutcome: toJson({ outcome: "failed", retryable: false }),
       },
-      where: { id: callId },
+      where: {
+        id: callId,
+        providerCallId: null,
+        run: { status: { in: [...CALL_STARTABLE_RUN_STATUSES] } },
+        runId,
+        status: DatabaseCallStatus.DIALING,
+      },
     });
+    if (failed.count === 0) return false;
     await this.appendRunEvent(
       runId,
       "call.completed",
       AuditActor.PROVIDER,
       { callId, failureCode: failure.code, status: "failed" },
       `${envelope.idempotencyKey}:failed`,
+    );
+    return true;
+  }
+
+  private async restorePausedCallClaim(callId: string): Promise<boolean> {
+    const restored = await this.client.call.updateMany({
+      data: {
+        failureCode: null,
+        failureMessage: null,
+        status: DatabaseCallStatus.QUEUED,
+      },
+      where: {
+        id: callId,
+        providerCallId: null,
+        run: { status: NegotiationRunStatus.PAUSED },
+        status: DatabaseCallStatus.DIALING,
+      },
+    });
+    return restored.count > 0;
+  }
+
+  private async cancelRegisteredProviderCall(
+    call: {
+      readonly id: string;
+      readonly providerCallId: string;
+      readonly structuredOutcome: Prisma.JsonValue | null;
+    },
+    runId: string,
+    provider: CallProvider,
+    envelope: QueueJobEnvelope,
+    context: QueueProcessingContext,
+  ): Promise<void> {
+    const outcome = asRecord(call.structuredOutcome);
+    if (optionalString(outcome.providerCancellationCompletedAt) !== undefined)
+      return;
+
+    const result = await provider.cancelCall(
+      call.providerCallId,
+      this.providerContext(envelope, context),
+    );
+    if (!result.ok && result.error.code !== "not-found") {
+      this.throwProviderFailure(result.error);
+    }
+    const recorded = await this.client.call.updateMany({
+      data: {
+        structuredOutcome: mergeJson(call.structuredOutcome, {
+          providerCancellationCompletedAt: new Date().toISOString(),
+        }),
+      },
+      where: { id: call.id, providerCallId: call.providerCallId },
+    });
+    if (recorded.count === 0) return;
+    await this.appendRunEvent(
+      runId,
+      "call.updated",
+      AuditActor.WORKER,
+      { callId: call.id, status: "cancelled" },
+      `${envelope.idempotencyKey}:provider-cancelled`,
+    );
+    await this.enqueueRank(runId, `cancelled:${call.id}`, envelope.traceId);
+  }
+
+  private async pauseRegisteredProviderCall(
+    call: {
+      readonly id: string;
+      readonly providerCallId: string;
+      readonly structuredOutcome: Prisma.JsonValue | null;
+    },
+    placement: QueueJobEnvelope<"call.place">["payload"],
+    runId: string,
+    provider: CallProvider,
+    envelope: QueueJobEnvelope,
+    context: QueueProcessingContext,
+  ): Promise<void> {
+    const result = await provider.cancelCall(
+      call.providerCallId,
+      this.providerContext(envelope, context),
+    );
+    if (!result.ok && result.error.code !== "not-found") {
+      this.throwProviderFailure(result.error);
+    }
+
+    const cancelledAt = new Date().toISOString();
+    const currentOutcome = asRecord(call.structuredOutcome);
+    const priorCancellations = Array.isArray(
+      currentOutcome.pausedProviderCancellations,
+    )
+      ? currentOutcome.pausedProviderCancellations
+      : [];
+    const resumableOutcome = { ...currentOutcome };
+    delete resumableOutcome.providerCancellationCompletedAt;
+    const reset = await this.client.call.updateMany({
+      data: {
+        aiDisclosureMadeAt: null,
+        durationSeconds: null,
+        endedAt: null,
+        failureCode: null,
+        failureMessage: null,
+        providerCallId: null,
+        recordingConsentAt: null,
+        recordingStorageKey: null,
+        startedAt: null,
+        status: DatabaseCallStatus.QUEUED,
+        structuredOutcome: toJson({
+          ...resumableOutcome,
+          pausedProviderCancellations: [
+            ...priorCancellations,
+            { cancelledAt, providerCallId: call.providerCallId },
+          ],
+        }),
+        transcriptText: null,
+      },
+      where: {
+        id: call.id,
+        providerCallId: call.providerCallId,
+        run: {
+          status: {
+            in: [NegotiationRunStatus.CALLING, NegotiationRunStatus.PAUSED],
+          },
+        },
+      },
+    });
+    let enqueueResumedCall: boolean;
+    if (reset.count > 0) {
+      const resumed = await this.client.call.updateMany({
+        data: { attempt: { increment: 1 } },
+        where: {
+          id: call.id,
+          providerCallId: null,
+          run: { status: NegotiationRunStatus.CALLING },
+          status: DatabaseCallStatus.QUEUED,
+        },
+      });
+      enqueueResumedCall = resumed.count > 0;
+    } else {
+      const current = await this.client.call.findUnique({
+        include: { run: { select: { status: true } } },
+        where: { id: call.id },
+      });
+      const cancellationHistory = Array.isArray(
+        asRecord(current?.structuredOutcome).pausedProviderCancellations,
+      )
+        ? (asRecord(current?.structuredOutcome)
+            .pausedProviderCancellations as unknown[])
+        : [];
+      enqueueResumedCall =
+        current !== null &&
+        current.providerCallId === null &&
+        current.status === DatabaseCallStatus.QUEUED &&
+        current.run?.status === NegotiationRunStatus.CALLING &&
+        cancellationHistory.some(
+          (entry) =>
+            optionalString(asRecord(entry).providerCallId) ===
+            call.providerCallId,
+        );
+    }
+    if (enqueueResumedCall) {
+      await this.queue.enqueue(
+        createQueueJob(queueJobNames.placeCall, placement, {
+          idempotencyKey: `${call.id}:resume-after-pause:${call.providerCallId}`,
+          traceId: envelope.traceId,
+        }),
+      );
+    }
+
+    if (reset.count === 0 && !enqueueResumedCall) return;
+
+    await this.appendRunEvent(
+      runId,
+      "call.updated",
+      AuditActor.WORKER,
+      {
+        callId: call.id,
+        reason: "provider_call_cancelled_while_paused",
+        status: "queued",
+      },
+      `${envelope.idempotencyKey}:provider-paused:${call.providerCallId}`,
     );
   }
 
@@ -2199,7 +2802,10 @@ export class WorkerOrchestrationService {
       createQueueJob(
         queueJobNames.processCallOutcome,
         { callId, providerEventId: `poll:${providerCallId}`, runId },
-        { idempotencyKey: `${callId}:outcome-poll`, traceId },
+        {
+          idempotencyKey: `${callId}:outcome-poll:${providerCallId}`,
+          traceId,
+        },
       ),
     );
   }
@@ -2215,6 +2821,181 @@ export class WorkerOrchestrationService {
         { runId },
         { idempotencyKey: `${runId}:rank:${trigger}`, traceId },
       ),
+    );
+  }
+
+  private async compensateCallProcessingFailure(
+    envelope: QueueJobEnvelope<"call.outcome.process">,
+    error: unknown,
+    context: QueueProcessingContext,
+  ): Promise<void> {
+    const call = await this.client.call.findUnique({
+      select: {
+        endedAt: true,
+        id: true,
+        providerCallId: true,
+        run: { select: { status: true } },
+        runId: true,
+        status: true,
+        structuredOutcome: true,
+      },
+      where: { id: envelope.payload.callId },
+    });
+    if (
+      call === null ||
+      call.runId !== envelope.payload.runId ||
+      call.status === DatabaseCallStatus.CANCELLED ||
+      call.run?.status === NegotiationRunStatus.PAUSED ||
+      call.run?.status === NegotiationRunStatus.CANCELLED
+    ) {
+      return;
+    }
+
+    const failureCode =
+      error instanceof ProviderOperationError
+        ? `outcome_${error.failure.code}`
+        : "outcome_processing_failed";
+    let cleanupFailure: ProviderFailure | undefined;
+    if (
+      !TERMINAL_CALL_STATUSES.has(call.status) &&
+      call.providerCallId !== null &&
+      this.providers.calls !== undefined
+    ) {
+      try {
+        const cancellation = await this.providers.calls.cancelCall(
+          call.providerCallId,
+          this.providerContext(envelope, context),
+        );
+        if (!cancellation.ok && cancellation.error.code !== "not-found") {
+          cleanupFailure = cancellation.error;
+        }
+      } catch {
+        cleanupFailure = {
+          code: "unavailable",
+          message: "Provider cancellation failed unexpectedly.",
+          provider: this.providers.calls.name,
+          retryable: true,
+        };
+      }
+    }
+    if (cleanupFailure !== undefined && call.providerCallId !== null) {
+      const pendingCleanup = await this.client.call.updateMany({
+        data: {
+          failureCode: "provider_cleanup_pending",
+          failureMessage:
+            "Call outcome processing is waiting for provider reconciliation.",
+          structuredOutcome: mergeJson(call.structuredOutcome, {
+            cleanup: "pending",
+            cleanupFailureCode: cleanupFailure.code,
+          }),
+        },
+        where: {
+          id: call.id,
+          providerCallId: call.providerCallId,
+          run: { status: { in: [...CALL_STARTABLE_RUN_STATUSES] } },
+          runId: envelope.payload.runId,
+          status: call.status,
+        },
+      });
+      if (pendingCleanup.count > 0) {
+        await this.queue.enqueue(
+          createQueueJob(queueJobNames.processCallOutcome, envelope.payload, {
+            idempotencyKey: `${envelope.idempotencyKey}:provider-reconcile:${context.attempt}`,
+            traceId: envelope.traceId,
+          }),
+        );
+      }
+      return;
+    }
+    const updated = await this.client.call.updateMany({
+      data: {
+        endedAt: call.endedAt ?? new Date(),
+        failureCode,
+        failureMessage: "Call outcome processing did not complete.",
+        status: TERMINAL_CALL_STATUSES.has(call.status)
+          ? call.status
+          : DatabaseCallStatus.FAILED,
+        structuredOutcome: mergeJson(call.structuredOutcome, {
+          extraction: "failed",
+          failureCode,
+          outcome: "unavailable",
+        }),
+        transcriptText: null,
+      },
+      where: {
+        id: call.id,
+        providerCallId: call.providerCallId,
+        run: { status: { in: [...CALL_STARTABLE_RUN_STATUSES] } },
+        runId: envelope.payload.runId,
+        status: call.status,
+      },
+    });
+    if (updated.count === 0) return;
+
+    await this.appendRunEvent(
+      envelope.payload.runId,
+      "call.completed",
+      AuditActor.WORKER,
+      { callId: call.id, failureCode, status: "failed" },
+      `${envelope.idempotencyKey}:processing-failed`,
+    );
+    await this.enqueueRank(
+      envelope.payload.runId,
+      `outcome-processing-failed:${call.id}`,
+      envelope.traceId,
+    );
+  }
+
+  private async compensateQuoteProcessingFailure(
+    envelope: QueueJobEnvelope<"quote.normalize">,
+    error: unknown,
+  ): Promise<void> {
+    const call = await this.client.call.findUnique({
+      select: {
+        id: true,
+        runId: true,
+        status: true,
+        structuredOutcome: true,
+      },
+      where: { id: envelope.payload.callId },
+    });
+    if (
+      call === null ||
+      call.runId !== envelope.payload.runId ||
+      call.status === DatabaseCallStatus.CANCELLED
+    ) {
+      return;
+    }
+
+    const currentOutcome = asRecord(call.structuredOutcome);
+    if (currentOutcome.extraction === "failed") {
+      await this.client.call.update({
+        data: { transcriptText: null },
+        where: { id: call.id },
+      });
+      return;
+    }
+    const failureCode =
+      error instanceof ProviderOperationError
+        ? `extraction_${error.failure.code}`
+        : "quote_processing_failed";
+    await this.client.call.update({
+      data: {
+        failureCode,
+        failureMessage: "Quote evidence processing did not complete.",
+        structuredOutcome: mergeJson(call.structuredOutcome, {
+          extraction: "failed",
+          extractionFailureCode: failureCode,
+          outcome: optionalString(currentOutcome.outcome) ?? "unavailable",
+        }),
+        transcriptText: null,
+      },
+      where: { id: call.id },
+    });
+    await this.enqueueRank(
+      envelope.payload.runId,
+      `quote-processing-failed:${call.id}`,
+      envelope.traceId,
     );
   }
 

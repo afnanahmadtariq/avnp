@@ -73,6 +73,7 @@ describe("ElevenLabsWebhookService", () => {
       runId: "run-1",
       startedAt: null,
       status: DatabaseCallStatus.NEGOTIATING,
+      structuredOutcome: null,
       transcriptText: null,
       updatedAt: new Date("2026-07-19T11:59:00.000Z"),
     });
@@ -167,6 +168,7 @@ describe("ElevenLabsWebhookService", () => {
       runId: "run-1",
       startedAt: new Date("2026-07-19T11:55:00.000Z"),
       status: DatabaseCallStatus.COMPLETED,
+      structuredOutcome: null,
       transcriptText: event.transcriptText,
       updatedAt: new Date("2026-07-19T12:00:01.000Z"),
     });
@@ -185,6 +187,31 @@ describe("ElevenLabsWebhookService", () => {
       headers: {},
       requestId: "request-3",
       traceId: "trace-3",
+    });
+
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(enqueue).toHaveBeenCalledOnce();
+  });
+
+  it("does not restore a transcript after secured processing finished", async () => {
+    findUnique.mockResolvedValue({
+      endedAt: new Date(occurredAt),
+      id: "call-1",
+      jobId: "job-1",
+      runId: "run-1",
+      startedAt: new Date("2026-07-19T11:55:00.000Z"),
+      status: DatabaseCallStatus.COMPLETED,
+      structuredOutcome: { extraction: "completed" },
+      transcriptText: null,
+      updatedAt: new Date("2026-07-19T12:00:01.000Z"),
+    });
+    const service = createService();
+
+    await service.receive({
+      body,
+      headers: {},
+      requestId: "request-late",
+      traceId: "trace-late",
     });
 
     expect(updateMany).not.toHaveBeenCalled();

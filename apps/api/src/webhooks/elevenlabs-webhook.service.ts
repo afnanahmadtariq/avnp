@@ -47,6 +47,7 @@ interface PersistedCallSnapshot {
   readonly runId: string | null;
   readonly startedAt: Date | null;
   readonly status: DatabaseCallStatus;
+  readonly structuredOutcome: unknown;
   readonly transcriptText: string | null;
   readonly updatedAt: Date;
 }
@@ -58,6 +59,7 @@ const callSelect = {
   runId: true,
   startedAt: true,
   status: true,
+  structuredOutcome: true,
   transcriptText: true,
   updatedAt: true,
 } as const;
@@ -121,6 +123,15 @@ function newerTranscript(
   return current === null || candidate.length > current.length
     ? candidate
     : current;
+}
+
+function transcriptProcessingFinished(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+
+  const extraction = (value as Record<string, unknown>).extraction;
+  return ["completed", "failed", "skipped"].includes(String(extraction));
 }
 
 @Injectable()
@@ -303,10 +314,11 @@ export class ElevenLabsWebhookService {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const incomingStatus = databaseStatus(event.status);
       const status = nextStatus(current.status, incomingStatus);
-      const transcriptText = newerTranscript(
-        current.transcriptText,
-        event.transcriptText,
-      );
+      const transcriptText = transcriptProcessingFinished(
+        current.structuredOutcome,
+      )
+        ? current.transcriptText
+        : newerTranscript(current.transcriptText, event.transcriptText);
       const occurredAt = new Date(event.occurredAt);
       const startedAt =
         current.startedAt ??

@@ -22,6 +22,10 @@ export interface DiscoverBusinessesPayload {
 
 export interface CancelCallPayload {
   readonly callId: string;
+  /** Provider session being cancelled; protects a resumed call from a stale cancellation job. */
+  readonly providerCallId?: string;
+  /** True when cancellation is a pause checkpoint and the call must remain resumable. */
+  readonly resumable?: boolean;
   readonly runId: string;
 }
 
@@ -274,8 +278,17 @@ function isPayload(name: QueueJobName, value: unknown): boolean {
       );
     case "call.cancel":
       return (
-        hasExactlyKeys(value, ["callId", "runId"]) &&
-        hasIdentifiers(value, ["callId", "runId"])
+        hasExactlyKeys(
+          value,
+          ["callId", "runId"],
+          ["providerCallId", "resumable"],
+        ) &&
+        hasIdentifiers(value, ["callId", "runId"]) &&
+        isOptionalIdentifier(value.providerCallId) &&
+        (value.resumable === undefined ||
+          typeof value.resumable === "boolean") &&
+        (value.resumable !== true ||
+          isBoundedString(value.providerCallId, 1, 200))
       );
     case "call.outcome.process":
       return (
