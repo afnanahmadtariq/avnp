@@ -57,6 +57,8 @@ import {
 
 const MILLISECONDS_PER_DAY = 86_400_000;
 const DEFAULT_EVIDENCE_RETENTION_DAYS = 30;
+const LEGACY_REPRESENTED_AS = "the customer";
+const MAX_REPRESENTED_AS_LENGTH = 120;
 const MAX_FOLLOW_UP_ROUNDS = 1;
 const TERMINAL_CALL_STATUSES = new Set<DatabaseCallStatus>([
   DatabaseCallStatus.CANCELLED,
@@ -169,6 +171,42 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0
     ? value.trim()
     : undefined;
+}
+
+function containsControlCharacter(value: string): boolean {
+  return [...value].some((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint <= 0x1f || codePoint === 0x7f;
+  });
+}
+
+export function representedAsFromSourceMetadata(
+  sourceMetadata: unknown,
+): string {
+  const metadata = asRecord(sourceMetadata);
+  if (!Object.hasOwn(metadata, "representedAs")) {
+    return LEGACY_REPRESENTED_AS;
+  }
+
+  const value = metadata.representedAs;
+  if (typeof value !== "string") {
+    throw new NonRetryableQueueError(
+      "The confirmed calling identity snapshot is invalid.",
+    );
+  }
+
+  const normalized = value.trim().replace(/\s+/gu, " ");
+  if (
+    normalized.length === 0 ||
+    normalized.length > MAX_REPRESENTED_AS_LENGTH ||
+    containsControlCharacter(normalized)
+  ) {
+    throw new NonRetryableQueueError(
+      "The confirmed calling identity snapshot is invalid.",
+    );
+  }
+
+  return normalized;
 }
 
 function extractionIsSettled(value: unknown): boolean {
@@ -907,6 +945,10 @@ export class WorkerOrchestrationService {
       );
     }
 
+    const representedAs = representedAsFromSourceMetadata(
+      run.specificationVersion.sourceMetadata,
+    );
+
     const truthfulLeverage = await this.loadTruthfulLeverage({
       businessId: call.businessId,
       currentQuoteId: envelope.payload.currentQuoteId,
@@ -953,6 +995,7 @@ export class WorkerOrchestrationService {
         },
         job: specification,
         locale: call.locale,
+        representedAs,
         strategy: envelope.payload.strategy,
         ...(truthfulLeverage === undefined ? {} : { truthfulLeverage }),
       },

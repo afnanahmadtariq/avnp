@@ -71,6 +71,7 @@ const jobInclude = {
     orderBy: { createdAt: "desc" },
   },
   specificationVersions: { orderBy: { version: "desc" } },
+  user: { select: { profile: true } },
 } satisfies Prisma.JobInclude;
 
 const runInclude = {
@@ -144,6 +145,7 @@ const liveProfileDefaults = {
   representedAs: "",
   timezone: "America/New_York",
 } as const;
+const MAX_REPRESENTED_AS_LENGTH = 120;
 
 function toJson(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
@@ -193,6 +195,49 @@ function stableSerialize(value: unknown): string {
 
 function contentDigest(value: unknown): string {
   return createHash("sha256").update(stableSerialize(value)).digest("hex");
+}
+
+function containsControlCharacter(value: string): boolean {
+  return [...value].some((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint <= 0x1f || codePoint === 0x7f;
+  });
+}
+
+function normalizedRepresentedAs(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+
+  const normalized = value.trim().replace(/\s+/gu, " ");
+  return normalized.length > 0 &&
+    normalized.length <= MAX_REPRESENTED_AS_LENGTH &&
+    !containsControlCharacter(normalized)
+    ? normalized
+    : undefined;
+}
+
+function specificationSnapshotDigest(
+  specification: unknown,
+  representedAs: string,
+): string {
+  return contentDigest({ representedAs, specification });
+}
+
+function sameSpecification(left: unknown, right: unknown): boolean {
+  return contentDigest(left) === contentDigest(right);
+}
+
+function confirmedVersionForJob(job: JobRecord) {
+  if (job.confirmedAt === null) return undefined;
+
+  const confirmedAt = job.confirmedAt.getTime();
+  const specificationVersions = job.specificationVersions.filter((candidate) =>
+    sameSpecification(candidate.specification, job.specification),
+  );
+  return (
+    specificationVersions.find(
+      (candidate) => candidate.confirmedAt.getTime() === confirmedAt,
+    ) ?? specificationVersions[0]
+  );
 }
 
 function publicJobId(): string {
@@ -594,7 +639,16 @@ export class ProductService {
       });
     }
 
-    const digest = contentDigest(parsed.data);
+    const representedAs = normalizedRepresentedAs(
+      asRecord(job.user?.profile).representedAs,
+    );
+    if (representedAs === undefined) {
+      throw new ConflictException(
+        "Complete the calling identity in your profile before confirming this request.",
+      );
+    }
+
+    const digest = specificationSnapshotDigest(parsed.data, representedAs);
     const confirmedAt = new Date();
     const sourceMetadata = toJson({
       consent: {
@@ -607,6 +661,7 @@ export class ProductService {
         provider: item.provider,
       })),
       mode: this.runtimeConfig.value.mode,
+      representedAs,
       source: "guided_form",
     });
 
@@ -620,6 +675,7 @@ export class ProductService {
             jobId_contentDigest: { contentDigest: digest, jobId: job.id },
           },
         });
+      const activeConfirmedAt = persistedVersion?.confirmedAt ?? confirmedAt;
       if (persistedVersion === null) {
         const concurrentRun = await transaction.negotiationRun.findFirst({
           select: { id: true },
@@ -651,7 +707,7 @@ export class ProductService {
         });
       }
       await transaction.job.update({
-        data: { confirmedAt, status: "READY" },
+        data: { confirmedAt: activeConfirmedAt, status: "READY" },
         where: { id: job.id },
       });
     });
@@ -695,7 +751,7 @@ export class ProductService {
         if (
           currentJob === null ||
           currentJob.confirmedAt === null ||
-          contentDigest(currentJob.specification) !== version.contentDigest
+          !sameSpecification(currentJob.specification, version.specification)
         ) {
           throw new ConflictException(
             "Confirm the current brief before discovering businesses.",
@@ -1521,9 +1577,6 @@ export class ProductService {
         settings: toJson(demoSettings),
       },
       update: {
-        ...(identity.displayName === undefined
-          ? {}
-          : { displayName: identity.displayName }),
         ...(identity.email === undefined ? {} : { email: identity.email }),
       },
       where: { id: identity.subject },
@@ -1575,10 +1628,7 @@ export class ProductService {
   }
 
   private requireConfirmedVersion(job: JobRecord) {
-    const digest = contentDigest(job.specification);
-    const version = job.specificationVersions.find(
-      (candidate) => candidate.contentDigest === digest,
-    );
+    const version = confirmedVersionForJob(job);
 
     if (!version || !job.confirmedAt) {
       throw new ConflictException(
@@ -1610,12 +1660,8 @@ export class ProductService {
   }
 
   private presentJobDetails(job: JobRecord): unknown {
-    const currentDigest = contentDigest(job.specification);
-    const latestVersion = job.confirmedAt
-      ? (job.specificationVersions.find(
-          (candidate) => candidate.contentDigest === currentDigest,
-        ) ?? job.specificationVersions[0])
-      : job.specificationVersions[0];
+    const latestVersion =
+      confirmedVersionForJob(job) ?? job.specificationVersions[0];
     const latestRun = job.runs[0];
     const consent = latestVersion
       ? consentFromVersion(latestVersion)
@@ -2426,7 +2472,10 @@ export class ProductService {
       update: { userId: user.id },
       where: { publicId: DEMO_JOB_PUBLIC_ID },
     });
-    const digest = contentDigest(demoSpecification);
+    const digest = specificationSnapshotDigest(
+      demoSpecification,
+      demoProfile.representedAs,
+    );
     let version = await this.database.jobSpecificationVersion.findUnique({
       where: { jobId_version: { jobId: job.id, version: 1 } },
     });
@@ -2439,6 +2488,7 @@ export class ProductService {
           sourceMetadata: toJson({
             consent: { calling: true, recording: true },
             fixtureMode: true,
+            representedAs: demoProfile.representedAs,
             sources: ["guided_form"],
           }),
           specification: toJson(demoSpecification),
@@ -2455,6 +2505,7 @@ export class ProductService {
           sourceMetadata: toJson({
             consent: { calling: true, recording: true },
             fixtureMode: true,
+            representedAs: demoProfile.representedAs,
             sources: ["voice_fixture", "document_fixture"],
           }),
           specification: toJson(demoSpecification),

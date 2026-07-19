@@ -229,6 +229,7 @@ describe("ElevenLabsTwilioCallProvider", () => {
         },
         job,
         locale: "en-US",
+        representedAs: "Afnan",
         strategy: "fee_removal",
         truthfulLeverage: {
           competingBusinessName: "Carolina Transit",
@@ -276,6 +277,7 @@ describe("ElevenLabsTwilioCallProvider", () => {
       relay_negotiation_strategy: "fee_removal",
       relay_quote_currency: "USD",
       relay_recording_disclosure: "This call may be recorded.",
+      relay_represented_as: "Afnan",
       relay_request_id: "request-1",
       relay_trace_id: "trace-1",
     });

@@ -26,6 +26,8 @@ export interface StartCallRequest {
   };
   readonly job: JobSpecification;
   readonly locale: string;
+  /** Confirmed snapshot of the customer identity Relay represents. */
+  readonly representedAs: string;
   readonly strategy: NegotiationStrategy;
   /** Evidence-backed leverage revalidated immediately before this call. */
   readonly truthfulLeverage?: TruthfulCallLeverage;

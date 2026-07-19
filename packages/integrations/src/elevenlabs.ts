@@ -515,6 +515,7 @@ export class ElevenLabsTwilioCallProvider implements CallProvider {
           relay_negotiation_strategy: request.strategy,
           relay_quote_currency: leverage?.currency ?? "",
           relay_recording_disclosure: request.disclosure.recordingDisclosure,
+          relay_represented_as: request.representedAs,
           relay_request_id: context.requestId,
           relay_trace_id: context.traceId,
         },

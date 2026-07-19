@@ -40,14 +40,22 @@ function jobFixture() {
     specification: demoSpecification,
     specificationVersions: [
       {
+        confirmedAt: new Date("2026-07-20T10:00:00.000Z"),
         contentDigest: digest(demoSpecification),
         id: "version-1",
+        sourceMetadata: {
+          consent: { calling: true, recording: true },
+          representedAs: "Relay Customer",
+        },
+        specification: demoSpecification,
         version: 1,
       },
     ],
     status: "FAILED",
     targetBudgetCents: 200_000,
     title: "Charlotte move",
+    updatedAt: new Date("2026-07-20T10:00:00.000Z"),
+    user: { profile: { representedAs: "Relay Customer" } },
   };
 }
 
@@ -137,11 +145,117 @@ describe("candidate invalidation", () => {
 
     expect(createVersion).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ jobId: "job-1", version: 4 }),
+        data: expect.objectContaining({
+          contentDigest: digest({
+            representedAs: "Relay Customer",
+            specification: demoSpecification,
+          }),
+          jobId: "job-1",
+          sourceMetadata: expect.objectContaining({
+            representedAs: "Relay Customer",
+          }),
+          version: 4,
+        }),
       }),
     );
     expect(deleteCandidates).toHaveBeenCalledWith({
       where: { jobId: "job-1" },
+    });
+  });
+
+  it("requires a calling identity before creating a confirmed snapshot", async () => {
+    const transaction = vi.fn();
+    const { service } = createService({ $transaction: transaction });
+    overrideOwnedJob(service, {
+      ...jobFixture(),
+      user: { profile: { representedAs: " " } },
+    });
+
+    await expect(
+      service.confirmJob("RLY-TEST", {
+        callingConsent: true,
+        recordingConsent: true,
+      }),
+    ).rejects.toThrow(
+      "Complete the calling identity in your profile before confirming this request.",
+    );
+
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
+  it("reuses an identical historical snapshot as the current confirmation", async () => {
+    const snapshotConfirmedAt = new Date("2026-07-18T10:00:00.000Z");
+    const createVersion = vi.fn();
+    const updateJob = vi.fn(async () => ({ id: "job-1" }));
+    const transactionClient = {
+      $queryRaw: vi.fn(async () => []),
+      job: { update: updateJob },
+      jobBusiness: { deleteMany: vi.fn() },
+      jobSpecificationVersion: {
+        create: createVersion,
+        findUnique: vi.fn(async () => ({
+          confirmedAt: snapshotConfirmedAt,
+          id: "version-existing",
+        })),
+      },
+    };
+    const { service } = createService({
+      $transaction: vi.fn(async (operation: unknown) =>
+        (operation as (value: unknown) => Promise<unknown>)(transactionClient),
+      ),
+    });
+    overrideOwnedJob(service);
+
+    await service.confirmJob("RLY-TEST", {
+      callingConsent: true,
+      recordingConsent: true,
+    });
+
+    expect(createVersion).not.toHaveBeenCalled();
+    expect(updateJob).toHaveBeenCalledWith({
+      data: { confirmedAt: snapshotConfirmedAt, status: "READY" },
+      where: { id: "job-1" },
+    });
+  });
+
+  it("uses the job confirmation pointer when identity snapshots share a specification", async () => {
+    const currentConfirmedAt = new Date("2026-07-18T10:00:00.000Z");
+    const { service } = createService({});
+    Reflect.set(
+      service,
+      "findOwnedJob",
+      vi.fn(async () => ({
+        ...jobFixture(),
+        confirmedAt: currentConfirmedAt,
+        specificationVersions: [
+          {
+            confirmedAt: new Date("2026-07-19T10:00:00.000Z"),
+            contentDigest: digest({
+              representedAs: "New Relay Identity",
+              specification: demoSpecification,
+            }),
+            id: "version-newer",
+            sourceMetadata: { representedAs: "New Relay Identity" },
+            specification: demoSpecification,
+            version: 2,
+          },
+          {
+            confirmedAt: currentConfirmedAt,
+            contentDigest: digest({
+              representedAs: "Relay Customer",
+              specification: demoSpecification,
+            }),
+            id: "version-current",
+            sourceMetadata: { representedAs: "Relay Customer" },
+            specification: demoSpecification,
+            version: 1,
+          },
+        ],
+      })),
+    );
+
+    await expect(service.getJob("RLY-TEST")).resolves.toMatchObject({
+      confirmedVersion: { id: "version-current", version: 1 },
     });
   });
 

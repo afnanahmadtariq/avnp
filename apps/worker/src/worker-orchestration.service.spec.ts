@@ -24,6 +24,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   classifyNonQuoteOutcome,
+  representedAsFromSourceMetadata,
   selectEvidenceBackedContinuations,
   selectLatestActiveQuoteIds,
   validateTruthfulLeverageQuotes,
@@ -48,6 +49,22 @@ describe("worker provider composition", () => {
 });
 
 describe("WorkerOrchestrationService", () => {
+  it("requires a safe confirmed calling identity and only falls back for legacy snapshots", () => {
+    expect(
+      representedAsFromSourceMetadata({ representedAs: "  Afnan Tariq  " }),
+    ).toBe("Afnan Tariq");
+    expect(representedAsFromSourceMetadata(null)).toBe("the customer");
+    expect(representedAsFromSourceMetadata({ sources: ["guided_form"] })).toBe(
+      "the customer",
+    );
+    expect(() =>
+      representedAsFromSourceMetadata({ representedAs: "   " }),
+    ).toThrow("The confirmed calling identity snapshot is invalid.");
+    expect(() =>
+      representedAsFromSourceMetadata({ representedAs: null }),
+    ).toThrow("The confirmed calling identity snapshot is invalid.");
+  });
+
   it("classifies evidenced non-quote outcomes without inventing a price", () => {
     expect(
       classifyNonQuoteOutcome(
@@ -863,6 +880,7 @@ describe("WorkerOrchestrationService", () => {
 
     expect(startCall).toHaveBeenCalledWith(
       expect.objectContaining({
+        representedAs: "Relay Customer",
         truthfulLeverage: {
           competingBusinessName: "Carolina Transit",
           competingQuoteAmountMinor: 184_000,
@@ -1818,6 +1836,7 @@ function followUpCallFixture() {
       id: "run-1",
       recordingConsentAt: consentAt,
       specificationVersion: {
+        sourceMetadata: { representedAs: "Relay Customer" },
         specification: {
           bedrooms: 2,
           dropoffAddress: { formattedAddress: "200 Oak St, Raleigh, NC" },

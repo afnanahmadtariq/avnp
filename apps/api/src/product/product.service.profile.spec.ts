@@ -14,7 +14,13 @@ interface StoredUser {
   updatedAt: Date;
 }
 
-function createProfileService(initialProfile: Record<string, unknown>) {
+function createProfileService(
+  initialProfile: Record<string, unknown>,
+  identityOverrides: Partial<{
+    displayName: string;
+    email: string;
+  }> = {},
+) {
   let user: StoredUser = {
     displayName: "Relay Customer",
     email: "customer@relay.example",
@@ -45,11 +51,34 @@ function createProfileService(initialProfile: Record<string, unknown>) {
       return user;
     },
   );
+  const upsert = vi.fn(
+    async (request: {
+      create: {
+        displayName?: string | null;
+        email?: string | null;
+      };
+      update: {
+        displayName?: string | null;
+        email?: string | null;
+      };
+    }) => {
+      user = {
+        ...user,
+        ...(request.update.displayName === undefined
+          ? {}
+          : { displayName: request.update.displayName ?? "" }),
+        ...(request.update.email === undefined
+          ? {}
+          : { email: request.update.email ?? "" }),
+      };
+      return user;
+    },
+  );
   const prisma = {
     client: {
       user: {
         update,
-        upsert: vi.fn(async () => user),
+        upsert,
       },
     },
   } as unknown as PrismaService;
@@ -58,8 +87,8 @@ function createProfileService(initialProfile: Record<string, unknown>) {
   } as unknown as RuntimeConfigService;
   const currentIdentity = {
     identity: {
-      displayName: user.displayName,
-      email: user.email,
+      displayName: identityOverrides.displayName ?? user.displayName,
+      email: identityOverrides.email ?? user.email,
       provider: "clerk",
       subject: user.id,
     },
@@ -71,10 +100,59 @@ function createProfileService(initialProfile: Record<string, unknown>) {
     {} as OutboxDispatcherService,
   );
 
-  return { service, update };
+  return { currentIdentity, service, update, upsert };
 }
 
-describe("customer profile phone", () => {
+describe("customer profile", () => {
+  it("seeds a Clerk name once while keeping the Relay display name user-managed", async () => {
+    const { service, upsert } = createProfileService(
+      { displayName: "Relay Customer" },
+      {
+        displayName: "Updated Clerk Name",
+        email: "updated@relay.example",
+      },
+    );
+
+    await expect(
+      service.updateProfile({ displayName: "Preferred Relay Name" }),
+    ).resolves.toMatchObject({
+      displayName: "Preferred Relay Name",
+      email: "updated@relay.example",
+    });
+    await expect(service.getProfile()).resolves.toMatchObject({
+      displayName: "Preferred Relay Name",
+      email: "updated@relay.example",
+    });
+
+    expect(upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ displayName: "Updated Clerk Name" }),
+        update: { email: "updated@relay.example" },
+      }),
+    );
+    expect(upsert).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({ displayName: expect.anything() }),
+      }),
+    );
+  });
+
+  it("keeps the verified email already stored during a transient Clerk identity lookup gap", async () => {
+    const { currentIdentity, service, upsert } = createProfileService({});
+    Reflect.set(currentIdentity, "identity", {
+      displayName: "Relay Customer",
+      provider: "clerk",
+      subject: "user-1",
+    });
+
+    await expect(service.getProfile()).resolves.toMatchObject({
+      email: "customer@relay.example",
+    });
+    expect(upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ update: {} }),
+    );
+  });
+
   it("presents a missing or legacy blank phone as null", async () => {
     const missing = createProfileService({});
     const legacyBlank = createProfileService({ phone: "" });
