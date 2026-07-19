@@ -16,6 +16,14 @@ interface HttpRequestShape {
   readonly url?: string;
 }
 
+interface CachedClerkIdentity {
+  readonly displayName?: string;
+  readonly email?: string;
+  readonly expiresAt: number;
+}
+
+const CLERK_IDENTITY_CACHE_MS = 60_000;
+
 function header(
   headers: HttpRequestShape["headers"],
   name: string,
@@ -71,6 +79,7 @@ function optionalClaim(
 export class AuthenticationService {
   private readonly clerk: ClerkClient | undefined;
   private readonly authorizedParties: readonly string[];
+  private readonly identityCache = new Map<string, CachedClerkIdentity>();
 
   constructor(private readonly runtimeConfig: RuntimeConfigService) {
     const config = runtimeConfig.value;
@@ -106,12 +115,17 @@ export class AuthenticationService {
 
       const auth = state.toAuth();
       const claims = auth.sessionClaims as Readonly<Record<string, unknown>>;
-      const email = optionalClaim(claims, ["email", "email_address"]);
-      const displayName = optionalClaim(claims, [
+      let email = optionalClaim(claims, ["email", "email_address"]);
+      let displayName = optionalClaim(claims, [
         "name",
         "full_name",
         "username",
       ]);
+      if (email === undefined || displayName === undefined) {
+        const clerkIdentity = await this.getClerkIdentity(auth.userId);
+        email ??= clerkIdentity.email;
+        displayName ??= clerkIdentity.displayName;
+      }
       return {
         provider: "clerk",
         subject: auth.userId,
@@ -121,6 +135,34 @@ export class AuthenticationService {
     } catch (error: unknown) {
       if (error instanceof UnauthorizedException) throw error;
       throw new UnauthorizedException("The session is invalid or expired.");
+    }
+  }
+
+  private async getClerkIdentity(userId: string): Promise<CachedClerkIdentity> {
+    const cached = this.identityCache.get(userId);
+    if (cached && cached.expiresAt > Date.now()) return cached;
+
+    if (!this.clerk) return { expiresAt: Date.now() };
+
+    try {
+      const user = await this.clerk.users.getUser(userId);
+      const email = user.primaryEmailAddress?.emailAddress.trim() || undefined;
+      const displayName =
+        user.fullName?.trim() ||
+        [user.firstName, user.lastName].filter(Boolean).join(" ").trim() ||
+        user.username?.trim() ||
+        undefined;
+      const identity = {
+        ...(displayName === undefined ? {} : { displayName }),
+        ...(email === undefined ? {} : { email }),
+        expiresAt: Date.now() + CLERK_IDENTITY_CACHE_MS,
+      };
+      this.identityCache.set(userId, identity);
+      return identity;
+    } catch {
+      // A valid session may continue using already-persisted account details
+      // during a transient Clerk Backend API outage.
+      return { expiresAt: Date.now() };
     }
   }
 }

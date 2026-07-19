@@ -11,6 +11,7 @@ const clerkEnabled = computed(
 );
 const api = useRelayApi();
 const { publicId, runId } = useRequestContext();
+const hasCurrentRequest = computed(() => publicId.value.length > 0);
 const {
   displayName,
   initials,
@@ -30,6 +31,7 @@ interface NavItem {
     | "call"
     | "report"
     | "profile"
+    | "security"
     | "settings";
 }
 
@@ -62,10 +64,19 @@ const requestItems = computed<NavItem[]>(() => [
   { label: "Report", to: `${requestBase.value}/report`, icon: "report" },
 ]);
 
-const accountItems: NavItem[] = [
+const accountItems = computed<NavItem[]>(() => [
   { label: "Profile", to: "/profile", icon: "profile" },
+  ...(clerkEnabled.value
+    ? [
+        {
+          label: "Sign-in & security",
+          to: "/account",
+          icon: "security" as const,
+        },
+      ]
+    : []),
   { label: "Settings", to: "/settings", icon: "settings" },
-];
+]);
 
 function isActive(item: NavItem): boolean {
   return route.path === item.to;
@@ -76,7 +87,8 @@ function isMobileParent(item: NavItem): boolean {
     (item.icon === "call" &&
       (route.path === `${requestBase.value}/review` ||
         route.path === `${requestBase.value}/businesses`)) ||
-    (item.icon === "profile" && route.path === "/settings")
+    (item.icon === "profile" &&
+      (route.path === "/settings" || route.path.startsWith("/account")))
   );
 }
 
@@ -85,7 +97,7 @@ function itemTarget(item: NavItem) {
 }
 
 function isMobileHidden(item: NavItem): boolean {
-  return ["brief", "business", "settings"].includes(item.icon);
+  return ["brief", "business", "security", "settings"].includes(item.icon);
 }
 
 async function loadAccountIdentity(): Promise<void> {
@@ -115,7 +127,7 @@ onMounted(loadAccountIdentity);
         <span class="app-header__context-dot" aria-hidden="true" />
         {{ clerkEnabled ? "Secure workspace" : "Local workspace" }}
       </div>
-      <UserButton v-if="clerkEnabled" />
+      <UserButton v-if="clerkEnabled" after-sign-out-url="/" />
       <NuxtLink
         v-else
         aria-label="Open profile"
@@ -132,7 +144,7 @@ onMounted(loadAccountIdentity);
 
     <aside class="app-sidebar">
       <nav aria-label="Product navigation">
-        <div class="nav-group">
+        <div v-if="hasCurrentRequest" class="nav-group">
           <p>Workspace</p>
           <NuxtLink
             v-for="item in workspaceItems"
@@ -219,11 +231,15 @@ onMounted(loadAccountIdentity);
                 <circle cx="10" cy="7" r="3.25" />
                 <path d="M4.5 17c.4-3.1 2.2-4.8 5.5-4.8s5.1 1.7 5.5 4.8" />
               </svg>
-              <svg v-else viewBox="0 0 20 20">
+              <svg v-else-if="item.icon === 'settings'" viewBox="0 0 20 20">
                 <circle cx="10" cy="10" r="2.6" />
                 <path
                   d="m10 2 .9 2.2 2.2.9 2.2-.9.6.6-.9 2.3.9 2.2 2.1.9v.8l-2.1.9-.9 2.2.9 2.3-.6.6-2.2-.9-2.2.9L10 18l-.9-2.2-2.2-.9-2.2.9-.6-.6.9-2.3-.9-2.2L2 9.8V9l2.1-.9.9-2.2-.9-2.3.6-.6 2.2.9 2.2-.9L10 2Z"
                 />
+              </svg>
+              <svg v-else viewBox="0 0 20 20">
+                <rect x="3.5" y="8" width="13" height="9" rx="2" />
+                <path d="M6.5 8V6a3.5 3.5 0 0 1 7 0v2M10 11.5v2" />
               </svg>
             </span>
             <span class="app-nav-label">{{ item.label }}</span>
@@ -467,7 +483,7 @@ onMounted(loadAccountIdentity);
   .app-sidebar nav {
     display: grid;
     gap: 0;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
     width: 100%;
   }
   .nav-group,

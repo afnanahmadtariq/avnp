@@ -17,7 +17,12 @@ const config = useRuntimeConfig();
         <h1>Welcome back.</h1>
         <p>Sign in to manage your briefs, calls, evidence, and decisions.</p>
       </div>
-      <SignIn v-if="config.public.authProvider === 'clerk'" />
+      <SignIn
+        v-if="config.public.authProvider === 'clerk'"
+        fallback-redirect-url="/dashboard"
+        sign-up-fallback-redirect-url="/profile?welcome=1"
+        sign-up-url="/sign-up"
+      />
       <NuxtLink v-else class="button button--blue" to="/dashboard">
         Continue to local workspace <span aria-hidden="true">→</span>
       </NuxtLink>

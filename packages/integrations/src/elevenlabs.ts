@@ -67,12 +67,29 @@ export interface ElevenLabsCallDependencies {
 }
 
 interface ConversationRecord {
+  readonly agentId?: string;
+  readonly clientReference?: string;
   readonly conversationId: string;
   readonly raw: Record<string, unknown>;
   readonly recordingUrl?: string;
   readonly status: CallStatus;
   readonly transcriptText?: string;
   readonly updatedAt: string;
+}
+
+function conversationClientReference(
+  value: Record<string, unknown>,
+): string | undefined {
+  const initiation = isRecord(value.conversation_initiation_client_data)
+    ? value.conversation_initiation_client_data
+    : undefined;
+  const variables = isRecord(initiation?.dynamic_variables)
+    ? initiation.dynamic_variables
+    : undefined;
+  const reference = variables?.relay_intake_session_id;
+  return isString(reference) && /^[A-Za-z0-9_-]{1,200}$/u.test(reference)
+    ? reference
+    : undefined;
 }
 
 function transcriptText(value: Record<string, unknown>): string | undefined {
@@ -320,6 +337,12 @@ export class ElevenLabsTwilioCallProvider implements CallProvider {
     return {
       ok: true,
       value: {
+        ...(conversation.value.agentId === undefined
+          ? {}
+          : { agentId: conversation.value.agentId }),
+        ...(conversation.value.clientReference === undefined
+          ? {}
+          : { clientReference: conversation.value.clientReference }),
         providerCallId: conversation.value.conversationId,
         ...(conversation.value.recordingUrl === undefined
           ? {}
@@ -750,9 +773,15 @@ export class ElevenLabsTwilioCallProvider implements CallProvider {
       this.#twilioCallIds.set(conversationId, callSid);
     }
     const extractedTranscript = transcriptText(decoded.value);
+    const agentId = isString(decoded.value.agent_id)
+      ? decoded.value.agent_id
+      : undefined;
+    const clientReference = conversationClientReference(decoded.value);
     return {
       ok: true,
       value: {
+        ...(agentId === undefined ? {} : { agentId }),
+        ...(clientReference === undefined ? {} : { clientReference }),
         conversationId,
         raw: decoded.value,
         ...(decoded.value.has_audio === true

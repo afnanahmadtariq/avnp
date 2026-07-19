@@ -86,6 +86,7 @@ export interface IntakeVoiceSession {
   available: boolean;
   message?: string;
   mode?: string;
+  sessionId?: string | null;
   signedUrl?: string | null;
 }
 
@@ -214,13 +215,16 @@ export interface RelayProfile {
   email: string;
   id: string;
   location: string;
-  phone: string;
+  phone: string | null;
   representedAs: string;
   timezone: string;
   updatedAt: string;
 }
 
-export type RelayProfileUpdate = Omit<RelayProfile, "id" | "updatedAt">;
+export type RelayProfileUpdate = Omit<
+  RelayProfile,
+  "email" | "id" | "updatedAt"
+>;
 
 export interface RelaySettings {
   aiDisclosure: true;

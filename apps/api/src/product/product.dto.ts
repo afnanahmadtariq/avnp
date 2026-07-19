@@ -195,8 +195,10 @@ export class UpdateProfileDto {
 
   @IsOptional()
   @IsString()
-  @Length(1, 40)
-  phone?: string;
+  @Matches(/^\+[1-9]\d{7,14}$/u, {
+    message: "phone must use international E.164 format",
+  })
+  phone?: string | null;
 
   @IsOptional()
   @IsString()

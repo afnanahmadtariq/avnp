@@ -60,6 +60,7 @@ function createService() {
         }
       | undefined,
     fetchFinishedConversation: vi.fn(),
+    isExpectedInterviewConversation: vi.fn(() => true),
   };
   const service = new IntakeService(
     product as never,
@@ -113,11 +114,15 @@ describe("IntakeService", () => {
       expect.objectContaining({ available: false, signedUrl: null }),
     );
     await expect(
-      service.completeVoiceSession("RLY-TEST", "conversation-1"),
+      service.completeVoiceSession(
+        "RLY-TEST",
+        "intake-session-1",
+        "conversation-1",
+      ),
     ).rejects.toBeInstanceOf(UnprocessableEntityException);
   });
 
-  it("binds a provider-allocated conversation to the owned job before returning its URL", async () => {
+  it("reserves an owned session before returning the provider URL", async () => {
     const { product, providers, service, voiceSessionCreate } = createService();
     product.getIntakeContext.mockResolvedValueOnce({
       jobId: "job-1",
@@ -127,19 +132,21 @@ describe("IntakeService", () => {
     providers.createSignedInterviewUrl.mockResolvedValueOnce({
       ok: true,
       value: {
-        conversationId: "conversation-1",
         signedUrl: "wss://api.elevenlabs.io/signed",
       },
     });
 
-    await expect(service.createVoiceSession("RLY-TEST")).resolves.toEqual({
-      available: true,
-      mode: "live",
-      signedUrl: "wss://api.elevenlabs.io/signed",
-    });
+    await expect(service.createVoiceSession("RLY-TEST")).resolves.toEqual(
+      expect.objectContaining({
+        available: true,
+        mode: "live",
+        sessionId: expect.stringMatching(/^intake_[a-f0-9]{32}$/),
+        signedUrl: "wss://api.elevenlabs.io/signed",
+      }),
+    );
     expect(voiceSessionCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
-        conversationId: "conversation-1",
+        conversationId: expect.stringMatching(/^intake_[a-f0-9]{32}$/),
         jobId: "job-1",
       }),
     });
@@ -153,10 +160,14 @@ describe("IntakeService", () => {
       mode: "live",
       retentionDays: 30,
     });
-    voiceSessionUpdateMany.mockResolvedValueOnce({ count: 0 });
+    voiceSessionUpdateMany.mockResolvedValue({ count: 0 });
 
     await expect(
-      service.completeVoiceSession("RLY-TEST", "conversation-other"),
+      service.completeVoiceSession(
+        "RLY-TEST",
+        "intake-session-1",
+        "conversation-other",
+      ),
     ).rejects.toBeInstanceOf(UnprocessableEntityException);
     expect(providers.fetchFinishedConversation).not.toHaveBeenCalled();
   });
@@ -199,7 +210,11 @@ describe("IntakeService", () => {
       name: "openai-responses",
     };
 
-    await service.completeVoiceSession("RLY-TEST", "conversation-1");
+    await service.completeVoiceSession(
+      "RLY-TEST",
+      "intake-session-1",
+      "conversation-1",
+    );
 
     expect(evidenceCreate).toHaveBeenCalledTimes(2);
     expect(voiceSessionUpdate).toHaveBeenCalledWith({
@@ -207,9 +222,15 @@ describe("IntakeService", () => {
       where: { conversationId: "conversation-1" },
     });
 
-    voiceSessionUpdateMany.mockResolvedValueOnce({ count: 0 });
+    voiceSessionUpdateMany
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 0 });
     await expect(
-      service.completeVoiceSession("RLY-TEST", "conversation-1"),
+      service.completeVoiceSession(
+        "RLY-TEST",
+        "intake-session-1",
+        "conversation-1",
+      ),
     ).rejects.toBeInstanceOf(UnprocessableEntityException);
     expect(providers.fetchFinishedConversation).toHaveBeenCalledTimes(1);
   });

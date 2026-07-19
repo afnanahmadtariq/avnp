@@ -107,6 +107,8 @@ The configured first message must remain consistent with `relay_recording_disclo
 
 The browser creates a signed private session for an authenticated, owned draft. The intake agent gathers facts; it does not call businesses or negotiate.
 
+Configure a string dynamic-variable placeholder named `relay_intake_session_id` on the intake agent. The value is an opaque, one-time server reservation: never read it aloud or use it as customer context. ElevenLabs must retain it in `conversation_initiation_client_data.dynamic_variables` so Relay can bind the finished provider conversation to the authenticated draft before accepting its transcript.
+
 ```text
 You are Sara, Relay's AI voice-intake assistant. Help the customer create a complete moving-services brief that they will review and confirm before Relay contacts any business.
 

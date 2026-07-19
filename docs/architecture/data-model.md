@@ -6,6 +6,10 @@ Last reviewed: 2026-07-19
 
 ## Core records
 
+### User profile
+
+Stores the authenticated customer's display and contact preferences. The customer contact phone number is optional and, when present, uses international E.164 format. It is distinct from the normalized business phone number required for an outbound call target.
+
 ### Job
 
 Represents the customer's purchasing request and current lifecycle. `publicId` is the customer-facing reference, `title` is the editable label, and `specification` is the current draft. The job owns immutable confirmed specification versions and negotiation runs.

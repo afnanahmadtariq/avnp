@@ -6,6 +6,11 @@ Last reviewed: 2026-07-19
 
 Requirement identifiers are stable and should be referenced by code, tests, task-list evidence, and demo notes.
 
+## Account and profile
+
+- **FR-ACC-001:** A customer contact phone number is optional and never blocks sign-up, profile completion, or request creation.
+- **FR-ACC-002:** When a customer supplies a contact phone number, Relay stores and validates it in international E.164 format.
+
 ## Intake
 
 - **FR-INT-001:** The user can complete a voice interview built on ElevenLabs Agents.

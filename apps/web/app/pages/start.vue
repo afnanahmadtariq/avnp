@@ -102,6 +102,12 @@ function applyExtractedFacts(): void {
 }
 
 watch(() => intake.extraction.value, applyExtractedFacts);
+watch(
+  () => intake.draftPublicId.value,
+  (publicId) => {
+    if (publicId) setCurrent(publicId);
+  },
+);
 watch(intakeMethod, () => {
   fileError.value = "";
   intake.clearError();

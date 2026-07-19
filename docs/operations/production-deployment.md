@@ -282,6 +282,8 @@ The deployment never invokes `migrate`, `db:reset`, `db:seed`, `--force-reset`, 
 
 Follow the checked-in [ElevenLabs agent contract](../development/elevenlabs-agent.md). Configure only these signed events:
 
+The intake agent must also define the `relay_intake_session_id` dynamic-variable placeholder. Relay supplies a unique value for each signed browser interview and rejects a completed conversation unless ElevenLabs returns the matching value and expected intake-agent ID.
+
 - `post_call_transcription`
 - `call_initiation_failure`
 

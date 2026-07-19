@@ -69,6 +69,7 @@ function errorMessage(error: unknown): string {
 
 export function useRelayApi() {
   const config = useRuntimeConfig();
+  const route = useRoute();
   const baseURL = String(config.public.apiBase).replace(/\/$/, "");
   const clerkAuth =
     config.public.authProvider === "clerk" ? useAuth() : undefined;
@@ -86,10 +87,18 @@ export function useRelayApi() {
       });
     } catch (error: unknown) {
       const candidate = error as { status?: number; statusCode?: number };
-      throw new RelayApiError(
-        errorMessage(error),
-        candidate.statusCode ?? candidate.status,
-      );
+      const statusCode = candidate.statusCode ?? candidate.status;
+      if (
+        statusCode === 401 &&
+        import.meta.client &&
+        !route.path.startsWith("/sign-in")
+      ) {
+        await navigateTo({
+          path: "/sign-in",
+          query: { redirect_url: route.fullPath },
+        });
+      }
+      throw new RelayApiError(errorMessage(error), statusCode);
     }
   }
 
@@ -121,10 +130,14 @@ export function useRelayApi() {
     getSettings: () => request<RelaySettings>("/settings"),
     createJob: (input: CreateJobInput) =>
       request<JobDetail>("/jobs", { body: input, method: "POST" }),
-    completeIntakeVoice: (publicId: string, conversationId: string) =>
+    completeIntakeVoice: (
+      publicId: string,
+      sessionId: string,
+      conversationId: string,
+    ) =>
       request<IntakeResult>(
         `/jobs/${encodeURIComponent(publicId)}/intake/voice/complete`,
-        { body: { conversationId }, method: "POST" },
+        { body: { conversationId, sessionId }, method: "POST" },
       ),
     confirmJob: (publicId: string, input: ConfirmJobInput) =>
       request<JobDetail>(`/jobs/${encodeURIComponent(publicId)}/confirm`, {

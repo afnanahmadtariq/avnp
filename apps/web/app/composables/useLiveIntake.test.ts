@@ -4,6 +4,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { JobDetail, JobSpecification } from "../types/api";
 import { useLiveIntake } from "./useLiveIntake";
 
+const elevenLabs = vi.hoisted(() => ({
+  endSession: vi.fn(),
+  startSession: vi.fn(),
+}));
+
+vi.mock("@elevenlabs/client", () => ({
+  Conversation: { startSession: elevenLabs.startSession },
+}));
+
 const specification: JobSpecification = {
   bedrooms: 2,
   dropoffAddress: { formattedAddress: "Charlotte, NC" },
@@ -36,6 +45,7 @@ const job: JobDetail = {
 };
 
 afterEach(() => {
+  vi.clearAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -141,6 +151,56 @@ describe("live intake", () => {
     expect(api.createJob).toHaveBeenCalledWith({ title: "Charlotte move" });
     expect(intake.voiceStatus.value).toBe("error");
     expect(intake.error.value).toContain("Configure ElevenLabs");
+    scope.stop();
+  });
+
+  it("binds the reserved session to the connected ElevenLabs conversation", async () => {
+    const getUserMedia = vi.fn().mockResolvedValue({
+      getTracks: () => [{ stop: vi.fn() }],
+    });
+    const api = {
+      completeIntakeVoice: vi.fn().mockResolvedValue({ job }),
+      createIntakeVoiceSession: vi.fn().mockResolvedValue({
+        available: true,
+        mode: "live",
+        sessionId: "intake_session_1",
+        signedUrl: "wss://api.elevenlabs.io/signed",
+      }),
+      createJob: vi.fn().mockResolvedValue(job),
+      updateJobDraft: vi.fn(),
+      uploadIntakeDocument: vi.fn(),
+    };
+    elevenLabs.startSession.mockImplementation(async (options) => {
+      options.onConnect?.({ conversationId: "conversation-1" });
+      return {
+        endSession: elevenLabs.endSession,
+        getId: () => "conversation-1",
+      };
+    });
+    vi.stubGlobal("useRelayApi", () => api);
+    vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
+
+    const scope = effectScope();
+    const intake = scope.run(() => useLiveIntake());
+    if (!intake) throw new Error("Intake composable was not created.");
+
+    await intake.startVoiceInterview("Charlotte move");
+    await intake.finishVoiceInterview();
+
+    expect(elevenLabs.startSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dynamicVariables: {
+          relay_intake_session_id: "intake_session_1",
+        },
+        signedUrl: "wss://api.elevenlabs.io/signed",
+      }),
+    );
+    expect(api.completeIntakeVoice).toHaveBeenCalledWith(
+      "RLY-3001",
+      "intake_session_1",
+      "conversation-1",
+    );
+    expect(intake.voiceStatus.value).toBe("complete");
     scope.stop();
   });
 });

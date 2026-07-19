@@ -1,10 +1,13 @@
 import { useAuth } from "@clerk/nuxt/composables";
 
-const publicRoutes = new Set(["/", "/sign-in", "/sign-up"]);
+import {
+  isLegacyDemoRequestRoute,
+  isPublicAppRoute,
+} from "~/utils/auth-routes";
 
 export default defineNuxtRouteMiddleware(async (to) => {
   const config = useRuntimeConfig();
-  if (config.public.authProvider !== "clerk" || publicRoutes.has(to.path)) {
+  if (config.public.authProvider !== "clerk" || isPublicAppRoute(to.path)) {
     return;
   }
 
@@ -25,5 +28,12 @@ export default defineNuxtRouteMiddleware(async (to) => {
       path: "/sign-in",
       query: { redirect_url: to.fullPath },
     });
+  }
+
+  // RLY-2048 existed only in the original frontend fixture. Retired bookmarks
+  // should recover through the owned request list instead of becoming a
+  // permanent not-found navigation context.
+  if (isLegacyDemoRequestRoute(to.path)) {
+    return navigateTo("/dashboard", { replace: true });
   }
 });

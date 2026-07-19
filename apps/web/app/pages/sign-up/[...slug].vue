@@ -20,7 +20,12 @@ const config = useRuntimeConfig();
           private.
         </p>
       </div>
-      <SignUp v-if="config.public.authProvider === 'clerk'" />
+      <SignUp
+        v-if="config.public.authProvider === 'clerk'"
+        fallback-redirect-url="/profile?welcome=1"
+        sign-in-fallback-redirect-url="/dashboard"
+        sign-in-url="/sign-in"
+      />
       <NuxtLink v-else class="button button--blue" to="/start">
         Start in local mode <span aria-hidden="true">→</span>
       </NuxtLink>

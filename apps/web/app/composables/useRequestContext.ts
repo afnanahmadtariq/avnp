@@ -9,7 +9,7 @@ export function useRequestContext() {
 
     return typeof routeId === "string" && routeId.length > 0
       ? routeId
-      : currentRequest.value.publicId;
+      : (currentRequest.value.publicId ?? "");
   });
 
   const runId = computed(() => {

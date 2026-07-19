@@ -15,6 +15,8 @@ import {
 
 import { configureApplication } from "../app.setup.js";
 import { AccountController } from "./account.controller.js";
+import { IntakeController } from "./intake.controller.js";
+import { IntakeService } from "./intake.service.js";
 import { JobsController } from "./jobs.controller.js";
 import { ProductService } from "./product.service.js";
 import { RunsController } from "./runs.controller.js";
@@ -29,12 +31,25 @@ describe("product API validation and routing", () => {
     updateProfile: vi.fn().mockResolvedValue({ displayName: "Relay Demo" }),
     updateSettings: vi.fn().mockResolvedValue({ aiDisclosure: true }),
   };
+  const intakeService = {
+    completeVoiceSession: vi
+      .fn()
+      .mockResolvedValue({ job: { publicId: "RLY-2048" } }),
+  };
   let app: INestApplication;
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
-      controllers: [JobsController, RunsController, AccountController],
-      providers: [{ provide: ProductService, useValue: productService }],
+      controllers: [
+        JobsController,
+        RunsController,
+        AccountController,
+        IntakeController,
+      ],
+      providers: [
+        { provide: ProductService, useValue: productService },
+        { provide: IntakeService, useValue: intakeService },
+      ],
     }).compile();
 
     app = moduleRef.createNestApplication();
@@ -71,6 +86,31 @@ describe("product API validation and routing", () => {
     });
   });
 
+  it("requires the Relay reservation when completing a voice interview", async () => {
+    await request(app.getHttpServer())
+      .post("/api/v1/jobs/RLY-2048/intake/voice/complete")
+      .send({ conversationId: "conversation-1" })
+      .expect(400);
+
+    expect(intakeService.completeVoiceSession).not.toHaveBeenCalled();
+  });
+
+  it("binds a validated voice completion to its request reservation", async () => {
+    await request(app.getHttpServer())
+      .post("/api/v1/jobs/RLY-2048/intake/voice/complete")
+      .send({
+        conversationId: "conversation-1",
+        sessionId: "intake_session_1",
+      })
+      .expect(200);
+
+    expect(intakeService.completeVoiceSession).toHaveBeenCalledWith(
+      "RLY-2048",
+      "intake_session_1",
+      "conversation-1",
+    );
+  });
+
   it("requires at least three unique businesses for a run", async () => {
     await request(app.getHttpServer())
       .post("/api/v1/jobs/RLY-2048/runs")
@@ -105,6 +145,24 @@ describe("product API validation and routing", () => {
     await request(app.getHttpServer())
       .patch("/api/v1/profile")
       .send({ displayName: "Relay Demo", isAdmin: true })
+      .expect(400);
+
+    expect(productService.updateProfile).not.toHaveBeenCalled();
+  });
+
+  it("accepts clearing the optional customer contact phone", async () => {
+    await request(app.getHttpServer())
+      .patch("/api/v1/profile")
+      .send({ phone: null })
+      .expect(200);
+
+    expect(productService.updateProfile).toHaveBeenCalledWith({ phone: null });
+  });
+
+  it("rejects a populated customer phone outside E.164 format", async () => {
+    await request(app.getHttpServer())
+      .patch("/api/v1/profile")
+      .send({ phone: "704-555-0100" })
       .expect(400);
 
     expect(productService.updateProfile).not.toHaveBeenCalled();

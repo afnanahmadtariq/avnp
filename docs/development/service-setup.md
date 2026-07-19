@@ -134,7 +134,7 @@ Relay uses Text Search (New) with a field mask and keeps only candidates with a 
 Relay has one call-lifecycle design: ElevenLabs owns the agent and native Twilio outbound-call initiation. There is no second Relay-owned Twilio transport.
 
 1. Create the negotiation agent from the checked-in [agent prompt and dynamic-variable contract](elevenlabs-agent.md), including disclosure, truthful-leverage rules, timeouts, and recording policy.
-2. Create a dedicated interview agent when the intake behavior differs. Set `ELEVENLABS_INTERVIEW_AGENT_ID`; otherwise Relay uses `ELEVENLABS_AGENT_ID` for both experiences.
+2. Create a dedicated interview agent when the intake behavior differs. Set `ELEVENLABS_INTERVIEW_AGENT_ID`; otherwise Relay uses `ELEVENLABS_AGENT_ID` for both experiences. Add a string dynamic-variable placeholder named `relay_intake_session_id`; Relay supplies a one-time server reservation when the browser session starts and verifies that same value before importing a transcript.
 3. Provision a voice-capable Twilio number, import it into ElevenLabs, assign it to the negotiation agent, and record the resulting ElevenLabs phone-number ID.
 4. Create an ElevenLabs API key for the server/worker.
 5. Configure only signed `post_call_transcription` and `call_initiation_failure` events to:

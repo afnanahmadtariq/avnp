@@ -132,7 +132,6 @@ describe("ProviderCompositionService", () => {
       if (url.includes("get-signed-url")) {
         return new Response(
           JSON.stringify({
-            conversation_id: "conversation-1",
             signed_url:
               "wss://api.elevenlabs.io/v1/convai/conversation?conversation_signature=signed-token",
           }),
@@ -141,7 +140,13 @@ describe("ProviderCompositionService", () => {
       }
       return new Response(
         JSON.stringify({
+          agent_id: "interview-agent",
           conversation_id: "conversation-1",
+          conversation_initiation_client_data: {
+            dynamic_variables: {
+              relay_intake_session_id: "intake-session-1",
+            },
+          },
           metadata: { start_time_unix_secs: 1_768_824_000 },
           status: "done",
           transcript: [
@@ -178,7 +183,6 @@ describe("ProviderCompositionService", () => {
     expect(signed).toEqual({
       ok: true,
       value: {
-        conversationId: "conversation-1",
         signedUrl:
           "wss://api.elevenlabs.io/v1/convai/conversation?conversation_signature=signed-token",
       },
@@ -195,11 +199,20 @@ describe("ProviderCompositionService", () => {
     expect(conversation).toMatchObject({
       ok: true,
       value: {
+        agentId: "interview-agent",
+        clientReference: "intake-session-1",
         providerCallId: "conversation-1",
         status: "completed",
         transcriptText:
           "Agent: What do you need?\nBusiness: A two-bedroom move.",
       },
     });
+    expect(
+      conversation.ok &&
+        service.isExpectedInterviewConversation(
+          conversation.value,
+          "intake-session-1",
+        ),
+    ).toBe(true);
   });
 });

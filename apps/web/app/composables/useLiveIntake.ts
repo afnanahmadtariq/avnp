@@ -43,6 +43,7 @@ export function useLiveIntake() {
   const extraction = shallowRef<JobSpecificationExtraction>();
   const processedFileName = ref("");
   const voiceConversationId = ref("");
+  const voiceSessionId = ref("");
   const voiceMode = ref<VoiceMode>("listening");
   const voiceStatus = ref<VoiceStatus>("idle");
   let conversation: ElevenLabsConversation | undefined;
@@ -124,7 +125,14 @@ export function useLiveIntake() {
         if (!publicId)
           throw new Error("Create a draft before processing audio.");
 
-        const result = await api.completeIntakeVoice(publicId, conversationId);
+        if (!voiceSessionId.value) {
+          throw new Error("The secure interview session has expired.");
+        }
+        const result = await api.completeIntakeVoice(
+          publicId,
+          voiceSessionId.value,
+          conversationId,
+        );
         const job = applyResult(result);
         voiceStatus.value = "complete";
         return job;
@@ -151,13 +159,14 @@ export function useLiveIntake() {
     error.value = "";
     extraction.value = undefined;
     voiceConversationId.value = "";
+    voiceSessionId.value = "";
     voiceMode.value = "listening";
     voiceStatus.value = "connecting";
 
     try {
       const job = await ensureDraft(title);
       const session = await api.createIntakeVoiceSession(job.publicId);
-      if (!session.available || !session.signedUrl) {
+      if (!session.available || !session.signedUrl || !session.sessionId) {
         throw new Error(
           session.message ??
             "Voice interviews are not available in this workspace yet.",
@@ -171,6 +180,7 @@ export function useLiveIntake() {
       }
 
       voiceStatus.value = "permission";
+      voiceSessionId.value = session.sessionId;
       const permissionStream = await navigator.mediaDevices.getUserMedia({
         audio: true,
       });
@@ -202,6 +212,9 @@ export function useLiveIntake() {
         onModeChange: ({ mode }) => {
           voiceMode.value = mode;
           voiceStatus.value = "listening";
+        },
+        dynamicVariables: {
+          relay_intake_session_id: session.sessionId,
         },
         signedUrl: session.signedUrl,
       });
@@ -286,6 +299,7 @@ export function useLiveIntake() {
     voiceActive,
     voiceConversationId,
     voiceMode,
+    voiceSessionId,
     voiceStatus,
   };
 }

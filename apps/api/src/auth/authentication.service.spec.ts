@@ -1,8 +1,20 @@
 import type { RelayRuntimeConfig } from "@relay/runtime-config";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RuntimeConfigService } from "../config/runtime-config.service.js";
 import { AuthenticationService } from "./authentication.service.js";
+
+const clerk = vi.hoisted(() => ({
+  authenticateRequest: vi.fn(),
+  getUser: vi.fn(),
+}));
+
+vi.mock("@clerk/backend", () => ({
+  createClerkClient: () => ({
+    authenticateRequest: clerk.authenticateRequest,
+    users: { getUser: clerk.getUser },
+  }),
+}));
 
 function localConfig(): RelayRuntimeConfig {
   return {
@@ -43,6 +55,10 @@ function localConfig(): RelayRuntimeConfig {
 }
 
 describe("AuthenticationService", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("provides the deterministic development identity without credentials", async () => {
     const service = new AuthenticationService({
       value: localConfig(),
@@ -51,5 +67,49 @@ describe("AuthenticationService", () => {
     await expect(service.authenticate({ headers: {} })).resolves.toEqual(
       expect.objectContaining({ provider: "local", subject: "demo-user" }),
     );
+  });
+
+  it("hydrates missing default session claims from the verified Clerk user", async () => {
+    const config: RelayRuntimeConfig = {
+      ...localConfig(),
+      auth: {
+        clerkPublishableKey: "pk_test_relay",
+        clerkSecretKey: "sk_test_relay",
+        provider: "clerk",
+      },
+    };
+    clerk.authenticateRequest.mockResolvedValue({
+      isAuthenticated: true,
+      toAuth: () => ({
+        sessionClaims: {},
+        userId: "user_relay",
+      }),
+    });
+    clerk.getUser.mockResolvedValue({
+      firstName: "Afnan",
+      fullName: "Afnan Tariq",
+      lastName: "Tariq",
+      primaryEmailAddress: { emailAddress: "afnan@example.com" },
+      username: null,
+    });
+    const service = new AuthenticationService({
+      value: config,
+    } as RuntimeConfigService);
+    const request = {
+      headers: { host: "api.zerotools.online" },
+      method: "GET",
+      originalUrl: "/api/v1/profile",
+      protocol: "https",
+    };
+
+    await expect(service.authenticate(request)).resolves.toEqual({
+      displayName: "Afnan Tariq",
+      email: "afnan@example.com",
+      provider: "clerk",
+      subject: "user_relay",
+    });
+    await service.authenticate(request);
+
+    expect(clerk.getUser).toHaveBeenCalledTimes(1);
   });
 });

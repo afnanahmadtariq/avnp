@@ -32,7 +32,7 @@ const profile = ref<RelayProfile>({
   email: "",
   id: "",
   location: "",
-  phone: "",
+  phone: null,
   representedAs: "",
   timezone: "America/New_York",
   updatedAt: "",
@@ -62,7 +62,7 @@ function normalizeProfile(value: RelayProfile): RelayProfile {
     email: value.email.trim(),
     id: value.id,
     location: value.location.trim(),
-    phone: value.phone.replace(/[\s()-]/g, ""),
+    phone: value.phone?.replace(/[\s()-]/g, "") || null,
     representedAs: value.representedAs.trim(),
     timezone: value.timezone,
     updatedAt: value.updatedAt,
@@ -74,7 +74,6 @@ function profileUpdate(value: RelayProfile): RelayProfileUpdate {
 
   return {
     displayName: normalized.displayName,
-    email: normalized.email,
     location: normalized.location,
     phone: normalized.phone,
     representedAs: normalized.representedAs,
@@ -83,17 +82,11 @@ function profileUpdate(value: RelayProfile): RelayProfileUpdate {
 }
 
 function validateProfile(value: RelayProfileUpdate): string | undefined {
-  if (
-    !value.displayName ||
-    !value.email ||
-    !value.location ||
-    !value.phone ||
-    !value.representedAs
-  ) {
+  if (!value.displayName || !value.location || !value.representedAs) {
     return "Complete every required profile field.";
   }
 
-  if (!/^\+[1-9]\d{7,14}$/.test(value.phone)) {
+  if (value.phone !== null && !/^\+[1-9]\d{7,14}$/.test(value.phone)) {
     return "Use an international phone number such as +17045550100.";
   }
 
@@ -324,19 +317,25 @@ async function saveProfile(): Promise<void> {
                 ><label
                   >Email address<input
                     v-model="profile.email"
+                    aria-describedby="profile-email-help"
                     autocomplete="email"
                     :disabled="isSaving"
                     maxlength="254"
+                    readonly
                     required
-                    type="email" /></label
+                    type="email"
+                  />
+                  <span id="profile-email-help" class="managed-field-help">
+                    Used for sign-in and account recovery.
+                    <NuxtLink to="/account">Manage sign-in details</NuxtLink>
+                  </span></label
                 ><label
-                  >Phone number<input
+                  >Phone number (optional)<input
                     v-model="profile.phone"
                     autocomplete="tel"
                     :disabled="isSaving"
                     maxlength="40"
                     pattern="\+[1-9][0-9]{7,14}"
-                    required
                     title="Use international format, for example +17045550100"
                     type="tel" /></label
                 ><label
@@ -405,6 +404,13 @@ async function saveProfile(): Promise<void> {
           </section>
           <section class="account-card account-shortcuts">
             <span>Account shortcuts</span>
+            <NuxtLink to="/account">
+              <span>
+                <strong>Sign-in and security</strong>
+                <small>Email, password, social accounts, and sessions</small>
+              </span>
+              <span aria-hidden="true">→</span>
+            </NuxtLink>
             <NuxtLink to="/settings#privacy">
               <span>
                 <strong>Privacy and retention</strong>
@@ -619,6 +625,20 @@ async function saveProfile(): Promise<void> {
 .settings-fields select:focus {
   border-color: var(--relay-blue);
   outline: 3px solid var(--relay-blue-soft);
+}
+.settings-fields input[readonly] {
+  background: var(--relay-surface-muted);
+  color: var(--relay-muted);
+  cursor: default;
+}
+.managed-field-help {
+  color: var(--relay-faint);
+  font-size: var(--relay-text-meta);
+  line-height: var(--relay-leading-meta);
+}
+.managed-field-help a {
+  color: var(--relay-blue);
+  font-weight: 610;
 }
 .identity-preview {
   background: var(--relay-blue-soft);

@@ -247,9 +247,10 @@ export class IntakeService {
       traceId,
     });
     if (!result.ok) this.throwProviderFailure(result.error, "voice");
+    const sessionId = `intake_${randomUUID().replaceAll("-", "")}`;
     await this.prisma.client.voiceIntakeSession.create({
       data: {
-        conversationId: result.value.conversationId,
+        conversationId: sessionId,
         expiresAt: new Date(Date.now() + INTERVIEW_SESSION_TTL_MS),
         jobId: context.jobId,
       },
@@ -257,12 +258,14 @@ export class IntakeService {
     return {
       available: true,
       mode: context.mode,
+      sessionId,
       signedUrl: result.value.signedUrl,
     };
   }
 
   async completeVoiceSession(
     publicId: string,
+    sessionId: string,
     conversationId: string,
   ): Promise<unknown> {
     const context = await this.product.getIntakeContext(publicId);
@@ -272,15 +275,34 @@ export class IntakeService {
       );
     }
 
-    const claimed = await this.prisma.client.voiceIntakeSession.updateMany({
-      data: { status: VoiceIntakeSessionStatus.PROCESSING },
-      where: {
-        conversationId,
-        expiresAt: { gt: new Date() },
-        jobId: context.jobId,
-        status: VoiceIntakeSessionStatus.READY,
-      },
-    });
+    let claimed = { count: 0 };
+    try {
+      claimed = await this.prisma.client.voiceIntakeSession.updateMany({
+        data: {
+          conversationId,
+          status: VoiceIntakeSessionStatus.PROCESSING,
+        },
+        where: {
+          conversationId: sessionId,
+          expiresAt: { gt: new Date() },
+          jobId: context.jobId,
+          status: VoiceIntakeSessionStatus.READY,
+        },
+      });
+    } catch {
+      // A unique provider ID can only be retried through the already-bound row.
+    }
+    if (claimed.count === 0) {
+      claimed = await this.prisma.client.voiceIntakeSession.updateMany({
+        data: { status: VoiceIntakeSessionStatus.PROCESSING },
+        where: {
+          conversationId,
+          expiresAt: { gt: new Date() },
+          jobId: context.jobId,
+          status: VoiceIntakeSessionStatus.READY,
+        },
+      });
+    }
     if (claimed.count !== 1) {
       throw new UnprocessableEntityException(
         "This voice interview is expired, already processed, or does not belong to this request.",
@@ -311,6 +333,17 @@ export class IntakeService {
         );
       }
       if (!snapshot.ok) this.throwProviderFailure(snapshot.error, "voice");
+      if (
+        !this.providers.isExpectedInterviewConversation(
+          snapshot.value,
+          sessionId,
+        )
+      ) {
+        durableWritesStarted = true;
+        throw new UnprocessableEntityException(
+          "This voice interview could not be verified for this request.",
+        );
+      }
       const transcript = snapshot.value.transcriptText?.trim();
       if (snapshot.value.status !== "completed" || !transcript) {
         throw new UnprocessableEntityException(

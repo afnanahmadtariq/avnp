@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 
-import ApiFeedback from "~/components/app/ApiFeedback.vue";
-import type { JobSummary } from "~/types/api";
-import { formatCurrency } from "~/utils/currency";
+import ApiFeedback from "../components/app/ApiFeedback.vue";
+import type { JobSummary } from "../types/api";
+import { formatCurrency } from "../utils/currency";
 
 useSeoMeta({ title: "Dashboard · Relay" });
 
 const api = useRelayApi();
-const { setCurrent } = useRequestContext();
+const { currentRequest, setCurrent } = useRequestContext();
+const { clearCurrent } = useCurrentRequest();
 const jobs = ref<JobSummary[]>([]);
 const pending = ref(true);
 const loadError = ref("");
@@ -120,6 +121,14 @@ async function loadJobs(): Promise<void> {
   try {
     const response = await api.getJobs();
     jobs.value = response.items;
+    const currentStillExists = jobs.value.some(
+      (job) => job.publicId === currentRequest.value.publicId,
+    );
+    if (!currentStillExists && jobs.value[0]) {
+      setCurrent(jobs.value[0].publicId);
+    } else if (jobs.value.length === 0) {
+      clearCurrent();
+    }
   } catch (error: unknown) {
     loadError.value =
       error instanceof Error

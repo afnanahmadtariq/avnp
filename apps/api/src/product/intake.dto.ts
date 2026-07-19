@@ -7,4 +7,11 @@ export class CompleteVoiceIntakeDto {
     message: "conversationId contains unsupported characters",
   })
   conversationId!: string;
+
+  @IsString()
+  @Length(1, 200)
+  @Matches(/^[A-Za-z0-9_-]+$/, {
+    message: "sessionId contains unsupported characters",
+  })
+  sessionId!: string;
 }

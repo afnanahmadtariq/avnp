@@ -6,6 +6,8 @@ import {
   healthResponseSchema,
   jobSpecificationSchema,
   saveDecisionRequestSchema,
+  updateUserProfileRequestSchema,
+  userProfileSchema,
 } from "./index.js";
 
 describe("shared contracts", () => {
@@ -74,6 +76,31 @@ describe("shared contracts", () => {
         outcome: "quote_selected",
         selectedQuoteId: null,
       }).success,
+    ).toBe(false);
+  });
+
+  it("accepts an absent customer contact phone", () => {
+    expect(
+      userProfileSchema.parse({
+        displayName: "Relay Customer",
+        email: "customer@relay.example",
+        id: "user_1",
+        location: "Charlotte, NC",
+        phone: null,
+        representedAs: "Relay Customer",
+        timezone: "America/New_York",
+        updatedAt: "2026-07-19T00:00:00.000Z",
+      }).phone,
+    ).toBeNull();
+    expect(updateUserProfileRequestSchema.parse({ phone: null })).toEqual({
+      phone: null,
+    });
+  });
+
+  it("rejects a populated customer phone outside E.164 format", () => {
+    expect(
+      updateUserProfileRequestSchema.safeParse({ phone: "704-555-0100" })
+        .success,
     ).toBe(false);
   });
 });

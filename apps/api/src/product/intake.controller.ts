@@ -55,6 +55,7 @@ export class IntakeController {
   ): Promise<unknown> {
     return this.intakeService.completeVoiceSession(
       publicId,
+      dto.sessionId,
       dto.conversationId,
     );
   }

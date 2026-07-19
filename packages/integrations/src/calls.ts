@@ -38,6 +38,9 @@ export interface StartedCall {
 }
 
 export interface CallStatusSnapshot {
+  readonly agentId?: string;
+  /** Server-issued opaque reference echoed through provider initiation data. */
+  readonly clientReference?: string;
   readonly outcome?: CallOutcome;
   readonly providerCallId: string;
   /** Authenticated provider URL; callers must never expose provider credentials. */

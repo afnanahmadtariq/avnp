@@ -24,7 +24,6 @@ export interface ProviderContextInput {
 }
 
 export interface SignedInterviewSession {
-  readonly conversationId: string;
   readonly signedUrl: string;
 }
 
@@ -145,8 +144,8 @@ export class ProviderCompositionService {
         "https://api.elevenlabs.io/v1/convai/conversation/get-signed-url",
       );
       url.searchParams.set("agent_id", agentId);
-      // Allocate the one-time provider conversation ID with the signed URL so
-      // Relay can bind it to the authenticated job before the client connects.
+      // Request the optional provider ID when available. Relay also supports
+      // the signed-url-only response currently returned by ElevenLabs.
       url.searchParams.set("include_conversation_id", "true");
       response = await fetch(url, {
         headers: { "xi-api-key": apiKey },
@@ -187,7 +186,6 @@ export class ProviderCompositionService {
       };
     }
 
-    let conversationId: unknown;
     let signedUrl: unknown;
     try {
       const responseText = await response.text();
@@ -198,22 +196,11 @@ export class ProviderCompositionService {
         "signed_url" in payload
           ? payload.signed_url
           : undefined;
-      conversationId =
-        typeof payload === "object" &&
-        payload !== null &&
-        "conversation_id" in payload
-          ? payload.conversation_id
-          : undefined;
     } catch {
-      conversationId = undefined;
       signedUrl = undefined;
     }
 
-    if (
-      typeof conversationId === "string" &&
-      /^[A-Za-z0-9_-]{1,200}$/.test(conversationId) &&
-      typeof signedUrl === "string"
-    ) {
+    if (typeof signedUrl === "string") {
       try {
         const parsedUrl = new URL(signedUrl);
         if (
@@ -224,7 +211,6 @@ export class ProviderCompositionService {
           return {
             ok: true,
             value: {
-              conversationId,
               signedUrl: parsedUrl.toString(),
             },
           };
@@ -262,5 +248,19 @@ export class ProviderCompositionService {
     }
 
     return this.callProvider.getCall(providerCallId, this.createContext(input));
+  }
+
+  isExpectedInterviewConversation(
+    snapshot: CallStatusSnapshot,
+    clientReference: string,
+  ): boolean {
+    const expectedAgentId =
+      this.runtimeConfig.value.call.interviewAgentId ??
+      this.runtimeConfig.value.call.agentId;
+    return (
+      expectedAgentId !== undefined &&
+      snapshot.agentId === expectedAgentId &&
+      snapshot.clientReference === clientReference
+    );
   }
 }

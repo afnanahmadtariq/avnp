@@ -140,7 +140,7 @@ const liveProfileDefaults = {
   displayName: "",
   email: "",
   location: "",
-  phone: "",
+  phone: null,
   representedAs: "",
   timezone: "America/New_York",
 } as const;
@@ -161,6 +161,12 @@ function asBoolean(value: unknown): boolean {
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function profilePhone(value: unknown): string | null {
+  return typeof value === "string" && /^\+[1-9]\d{7,14}$/u.test(value)
+    ? value
+    : null;
 }
 
 function stableSerialize(value: unknown): string {
@@ -999,14 +1005,19 @@ export class ProductService {
       this.runtimeConfig.value.mode === "fixture"
         ? demoProfile
         : liveProfileDefaults;
+    const storedProfile = asRecord(user.profile);
+    const storedPhone = Object.hasOwn(storedProfile, "phone")
+      ? storedProfile.phone
+      : defaults.phone;
     return {
       ...defaults,
-      ...asRecord(user.profile),
+      ...storedProfile,
       displayName: user.displayName ?? defaults.displayName,
       email: user.email ?? defaults.email,
       id: user.id,
       mode: this.runtimeConfig.value.mode,
       name: user.displayName ?? defaults.displayName,
+      phone: profilePhone(storedPhone),
       updatedAt: user.updatedAt.toISOString(),
     };
   }

@@ -162,8 +162,8 @@ model Job {
   @@index([status, updatedAt])
 }
 
-/// A one-time binding between an authenticated Relay job and the provider-
-/// allocated conversation identifier returned with a signed interview URL.
+/// A one-time binding between an authenticated Relay job, its server-issued
+/// interview reservation, and the provider conversation created in-browser.
 model VoiceIntakeSession {
   id             String                   @id @default(cuid())
   jobId          String

@@ -83,6 +83,10 @@ describe("account pages", () => {
 
     expect(wrapper.get(".profile-identity h2").text()).toBe("Relay Demo");
     expect(accountIdentity.syncAccountIdentity).toHaveBeenCalledWith(profile);
+    expect(
+      wrapper.get('input[autocomplete="email"]').attributes("readonly"),
+    ).toBeDefined();
+    expect(wrapper.text()).toContain("Manage sign-in details");
 
     await wrapper
       .get<HTMLInputElement>('input[autocomplete="name"]')
@@ -92,7 +96,6 @@ describe("account pages", () => {
 
     expect(api.updateProfile).toHaveBeenCalledWith({
       displayName: "Relay Customer",
-      email: profile.email,
       location: profile.location,
       phone: profile.phone,
       representedAs: profile.representedAs,
@@ -103,6 +106,54 @@ describe("account pages", () => {
       displayName: "Relay Customer",
     });
     expect(wrapper.text()).toContain("Profile saved to Relay.");
+  });
+
+  it("loads and saves a profile without a customer contact phone", async () => {
+    const profileWithoutPhone = { ...profile, phone: null };
+    api.getProfile.mockResolvedValueOnce(profileWithoutPhone);
+    api.updateProfile.mockImplementationOnce(async (value) => ({
+      ...profileWithoutPhone,
+      ...value,
+    }));
+    const wrapper = mount(ProfilePage, {
+      global: { stubs: globalComponents },
+    });
+    await flushPromises();
+
+    const phoneInput = wrapper.get<HTMLInputElement>(
+      'input[autocomplete="tel"]',
+    );
+    expect(phoneInput.element.value).toBe("");
+    expect(phoneInput.attributes("required")).toBeUndefined();
+
+    await wrapper.get("#profile-form").trigger("submit");
+    await flushPromises();
+
+    expect(api.updateProfile).toHaveBeenCalledWith({
+      displayName: profile.displayName,
+      location: profile.location,
+      phone: null,
+      representedAs: profile.representedAs,
+      timezone: profile.timezone,
+    });
+    expect(accountIdentity.syncAccountIdentity).toHaveBeenLastCalledWith(
+      profileWithoutPhone,
+    );
+  });
+
+  it("does not save an invalid populated customer contact phone", async () => {
+    const wrapper = mount(ProfilePage, {
+      global: { stubs: globalComponents },
+    });
+    await flushPromises();
+
+    await wrapper
+      .get<HTMLInputElement>('input[autocomplete="tel"]')
+      .setValue("704-555-0100");
+    await wrapper.get("#profile-form").trigger("submit");
+    await flushPromises();
+
+    expect(api.updateProfile).not.toHaveBeenCalled();
   });
 
   it("debounces settings and does not save the initial load", async () => {

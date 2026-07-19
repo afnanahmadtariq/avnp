@@ -1,14 +1,17 @@
+import { readonly } from "vue";
+
 const requestStorageKey = "relay-current-request";
 
 interface CurrentRequestState {
-  publicId: string;
+  publicId?: string;
   runId?: string;
 }
 
 export function useCurrentRequest() {
-  const state = useState<CurrentRequestState>("relay-current-request", () => ({
-    publicId: "RLY-2048",
-  }));
+  const state = useState<CurrentRequestState>(
+    "relay-current-request",
+    () => ({}),
+  );
 
   function hydrate(): void {
     if (!import.meta.client) return;
@@ -19,6 +22,11 @@ export function useCurrentRequest() {
 
     try {
       const parsed = JSON.parse(stored) as Partial<CurrentRequestState>;
+
+      if (parsed.publicId === "RLY-2048") {
+        window.localStorage.removeItem(requestStorageKey);
+        return;
+      }
 
       if (typeof parsed.publicId === "string" && parsed.publicId.length > 0) {
         state.value = {
@@ -42,5 +50,10 @@ export function useCurrentRequest() {
     }
   }
 
-  return { currentRequest: readonly(state), hydrate, setCurrent };
+  function clearCurrent(): void {
+    state.value = {};
+    if (import.meta.client) window.localStorage.removeItem(requestStorageKey);
+  }
+
+  return { clearCurrent, currentRequest: readonly(state), hydrate, setCurrent };
 }
