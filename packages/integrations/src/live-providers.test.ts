@@ -287,9 +287,7 @@ test(
   },
   async () => {
     const apiKey = requiredEnvironmentValue("ELEVENLABS_API_KEY");
-    const negotiationAgentId = requiredEnvironmentValue(
-      "ELEVENLABS_AGENT_ID",
-    );
+    const negotiationAgentId = requiredEnvironmentValue("ELEVENLABS_AGENT_ID");
     const agentIds = [
       ...new Set([
         negotiationAgentId,
@@ -341,7 +339,9 @@ test(
     try {
       phonePayload = await phoneResponse.json();
     } catch {
-      throw new Error("ElevenLabs returned malformed phone number configuration.");
+      throw new Error(
+        "ElevenLabs returned malformed phone number configuration.",
+      );
     }
     assert.ok(
       isRecord(phonePayload) &&
