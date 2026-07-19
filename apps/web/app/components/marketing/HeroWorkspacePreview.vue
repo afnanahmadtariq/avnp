@@ -114,10 +114,8 @@ const previewNegotiations = negotiations.map((negotiation) => ({
 }
 
 .product-preview__brand > span {
-  border-left: 1px solid var(--relay-line-strong);
   color: var(--relay-muted);
   font-size: 0.75rem;
-  padding-left: 12px;
 }
 
 .product-preview__summary {
@@ -139,7 +137,7 @@ const previewNegotiations = negotiations.map((negotiation) => ({
 
 .product-preview__label {
   color: rgb(255 255 255 / 58%);
-  font-size: 0.7rem;
+  font-size: var(--relay-text-meta);
 }
 
 .product-preview__summary strong {
@@ -162,13 +160,13 @@ const previewNegotiations = negotiations.map((negotiation) => ({
 
 .product-preview__confidence small {
   color: rgb(255 255 255 / 45%);
-  font-size: 0.62rem;
+  font-size: var(--relay-text-meta);
 }
 
 .product-preview__section-heading {
   color: var(--relay-faint);
   display: flex;
-  font-size: 0.66rem;
+  font-size: var(--relay-text-meta);
   justify-content: space-between;
   letter-spacing: 0.05em;
   padding: 7px 20px 4px;
@@ -220,7 +218,7 @@ const previewNegotiations = negotiations.map((negotiation) => ({
   color: var(--relay-muted);
   display: inline-flex;
   flex: 0 0 auto;
-  font-size: 0.6rem;
+  font-size: var(--relay-text-meta);
   font-weight: 600;
   height: 34px;
   justify-content: center;
@@ -235,7 +233,7 @@ const previewNegotiations = negotiations.map((negotiation) => ({
 
 .offer__price s {
   color: var(--relay-faint);
-  font-size: 0.62rem;
+  font-size: var(--relay-text-meta);
 }
 
 .offer__price strong {
@@ -261,7 +259,7 @@ const previewNegotiations = negotiations.map((negotiation) => ({
   border-radius: 999px;
   color: #ffffff;
   display: inline-flex;
-  font-size: 0.65rem;
+  font-size: var(--relay-text-meta);
   height: 22px;
   justify-content: center;
   width: 22px;
@@ -269,13 +267,13 @@ const previewNegotiations = negotiations.map((negotiation) => ({
 
 .product-preview__recommendation strong {
   display: block;
-  font-size: 0.72rem;
+  font-size: var(--relay-text-control);
   font-weight: 580;
 }
 
 .product-preview__recommendation p {
   color: var(--relay-muted);
-  font-size: 0.63rem;
+  font-size: var(--relay-text-meta);
   margin: 3px 0 0;
 }
 
@@ -283,7 +281,7 @@ const previewNegotiations = negotiations.map((negotiation) => ({
   color: var(--relay-green);
 }
 
-@media (max-width: 520px) {
+@media (max-width: 640px) {
   .product-preview__summary {
     min-height: 116px;
     padding: 19px;

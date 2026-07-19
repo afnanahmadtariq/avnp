@@ -1,0 +1,147 @@
+import type {
+  ApiErrorBody,
+  CandidateBusiness,
+  JobDetail,
+  JobSpecification,
+  JobSummary,
+  RelayAccountExport,
+  RelayProfile,
+  RelayProfileUpdate,
+  RelaySettings,
+  RelaySettingsUpdate,
+  RunEvent,
+  RunReport,
+  RunSnapshot,
+} from "~/types/api";
+
+interface CreateJobInput {
+  specification: JobSpecification;
+  title?: string;
+}
+
+interface ConfirmJobInput {
+  callingConsent: boolean;
+  recordingConsent: boolean;
+}
+
+interface ApiRequestOptions {
+  body?: unknown;
+  method?: "GET" | "PATCH" | "POST" | "PUT";
+}
+
+export class RelayApiError extends Error {
+  readonly statusCode?: number;
+
+  constructor(message: string, statusCode?: number) {
+    super(message);
+    this.name = "RelayApiError";
+    this.statusCode = statusCode;
+  }
+}
+
+function errorMessage(error: unknown): string {
+  if (typeof error !== "object" || error === null) {
+    return "Relay could not reach the service. Please try again.";
+  }
+
+  const candidate = error as {
+    data?: ApiErrorBody;
+    message?: string;
+    statusCode?: number;
+    status?: number;
+  };
+  const responseMessage = candidate.data?.message;
+
+  if (Array.isArray(responseMessage)) {
+    return responseMessage.join(" ");
+  }
+
+  return (
+    responseMessage ??
+    candidate.message ??
+    "Relay could not reach the service. Please try again."
+  );
+}
+
+export function useRelayApi() {
+  const config = useRuntimeConfig();
+  const baseURL = String(config.public.apiBase).replace(/\/$/, "");
+
+  async function request<T>(
+    path: string,
+    options: ApiRequestOptions = {},
+  ): Promise<T> {
+    try {
+      return await $fetch<T>(`${baseURL}${path}`, {
+        body: options.body as Record<string, unknown> | undefined,
+        method: options.method ?? "GET",
+      });
+    } catch (error: unknown) {
+      const candidate = error as { status?: number; statusCode?: number };
+      throw new RelayApiError(
+        errorMessage(error),
+        candidate.statusCode ?? candidate.status,
+      );
+    }
+  }
+
+  return {
+    exportAccount: () => request<RelayAccountExport>("/account/export"),
+    getCandidates: (publicId: string) =>
+      request<{ items: CandidateBusiness[] }>(
+        `/jobs/${encodeURIComponent(publicId)}/candidates`,
+      ),
+    getEvents: (runId: string) =>
+      request<{ items: RunEvent[]; sequence: number }>(
+        `/runs/${encodeURIComponent(runId)}/events`,
+      ),
+    getJob: (publicId: string) =>
+      request<JobDetail>(`/jobs/${encodeURIComponent(publicId)}`),
+    getJobs: () => request<{ items: JobSummary[] }>("/jobs"),
+    getProfile: () => request<RelayProfile>("/profile"),
+    getReport: (runId: string) =>
+      request<RunReport>(`/runs/${encodeURIComponent(runId)}/report`),
+    getRun: (runId: string) =>
+      request<RunSnapshot>(`/runs/${encodeURIComponent(runId)}`),
+    getSettings: () => request<RelaySettings>("/settings"),
+    createJob: (input: CreateJobInput) =>
+      request<JobDetail>("/jobs", { body: input, method: "POST" }),
+    confirmJob: (publicId: string, input: ConfirmJobInput) =>
+      request<JobDetail>(`/jobs/${encodeURIComponent(publicId)}/confirm`, {
+        body: input,
+        method: "POST",
+      }),
+    discoverBusinesses: (publicId: string) =>
+      request<{
+        items: CandidateBusiness[];
+        jobPublicId: string;
+        mode: string;
+      }>(`/jobs/${encodeURIComponent(publicId)}/discovery`, { method: "POST" }),
+    saveDecision: (runId: string, quoteId: string) =>
+      request<{ quoteId: string; saved: boolean; savedAt: string }>(
+        `/runs/${encodeURIComponent(runId)}/decision`,
+        { body: { quoteId }, method: "PUT" },
+      ),
+    startRun: (publicId: string, businessIds: string[]) =>
+      request<RunSnapshot>(`/jobs/${encodeURIComponent(publicId)}/runs`, {
+        body: { businessIds },
+        method: "POST",
+      }),
+    updateJobDraft: (publicId: string, specification: JobSpecification) =>
+      request<JobDetail>(`/jobs/${encodeURIComponent(publicId)}/draft`, {
+        body: { specification },
+        method: "PATCH",
+      }),
+    updateProfile: (profile: RelayProfileUpdate) =>
+      request<RelayProfile>("/profile", { body: profile, method: "PATCH" }),
+    updateRun: (runId: string, action: "cancel" | "pause" | "resume") =>
+      request<RunSnapshot>(`/runs/${encodeURIComponent(runId)}/${action}`, {
+        method: "POST",
+      }),
+    updateSettings: (settings: RelaySettingsUpdate) =>
+      request<RelaySettings>("/settings", {
+        body: settings,
+        method: "PATCH",
+      }),
+  };
+}

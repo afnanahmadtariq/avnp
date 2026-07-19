@@ -1,0 +1,794 @@
+<script setup lang="ts">
+import { computed, nextTick, onMounted, ref } from "vue";
+
+import type { CandidateBusiness } from "~/types/api";
+
+useSeoMeta({ title: "Approve businesses · Relay" });
+
+const router = useRouter();
+const api = useRelayApi();
+const { publicId, setCurrent } = useRequestContext();
+const sortBy = ref<"match" | "rating" | "distance">("match");
+const expandedBusiness = ref<string | null>(null);
+const businesses = ref<CandidateBusiness[]>([]);
+const loading = ref(true);
+const discovering = ref(false);
+const starting = ref(false);
+const loadError = ref("");
+const startError = ref("");
+
+const selectedCount = computed(
+  () => businesses.value.filter((business) => business.selected).length,
+);
+
+const sortedBusinesses = computed(() => {
+  const result = [...businesses.value];
+
+  if (sortBy.value === "rating") {
+    return result.sort(
+      (left, right) => (right.rating ?? 0) - (left.rating ?? 0),
+    );
+  }
+
+  if (sortBy.value === "distance") {
+    return result.sort(
+      (left, right) =>
+        (left.distanceMiles ?? Number.POSITIVE_INFINITY) -
+        (right.distanceMiles ?? Number.POSITIVE_INFINITY),
+    );
+  }
+
+  return result;
+});
+
+function toggleDetails(id: string): void {
+  expandedBusiness.value = expandedBusiness.value === id ? null : id;
+}
+
+function selectionStorageKey(): string {
+  return `relay-business-selection:${publicId.value}`;
+}
+
+function storedSelection(): Set<string> | null {
+  if (!import.meta.client) return null;
+
+  const stored = window.localStorage.getItem(selectionStorageKey());
+  if (!stored) return null;
+
+  try {
+    const parsed = JSON.parse(stored) as unknown;
+    return Array.isArray(parsed)
+      ? new Set(
+          parsed.filter((value): value is string => typeof value === "string"),
+        )
+      : null;
+  } catch {
+    window.localStorage.removeItem(selectionStorageKey());
+    return null;
+  }
+}
+
+function persistSelection(): void {
+  if (!import.meta.client) return;
+
+  window.localStorage.setItem(
+    selectionStorageKey(),
+    JSON.stringify(
+      businesses.value
+        .filter((business) => business.selected)
+        .map((business) => business.id),
+    ),
+  );
+}
+
+function applyCandidates(candidates: CandidateBusiness[]): void {
+  const saved = storedSelection();
+  businesses.value = candidates.map((business) => ({
+    ...business,
+    selected: saved ? saved.has(business.id) : business.selected,
+  }));
+}
+
+async function loadBusinesses(forceDiscovery = false): Promise<void> {
+  loading.value = true;
+  loadError.value = "";
+
+  try {
+    await nextTick();
+    let response = await api.getCandidates(publicId.value);
+
+    if (forceDiscovery || response.items.length === 0) {
+      discovering.value = true;
+      await api.discoverBusinesses(publicId.value);
+      response = await api.getCandidates(publicId.value);
+    }
+
+    applyCandidates(response.items);
+  } catch (error: unknown) {
+    loadError.value =
+      error instanceof Error
+        ? error.message
+        : "Relay could not load matched businesses.";
+  } finally {
+    discovering.value = false;
+    loading.value = false;
+  }
+}
+
+function candidateTone(status: string): "neutral" | "success" | "warning" {
+  if (
+    ["eligible", "recommended", "shortlisted"].includes(status.toLowerCase())
+  ) {
+    return "success";
+  }
+  if (["excluded", "review"].includes(status.toLowerCase())) return "warning";
+  return "neutral";
+}
+
+function candidateStatus(status: string): string {
+  const normalized = status.replaceAll("_", " ");
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+function candidateNote(business: CandidateBusiness): string {
+  return typeof business.distanceMiles === "number"
+    ? `${business.distanceMiles.toFixed(1)} miles from the route`
+    : "Verified for this moving request";
+}
+
+function candidateSource(source: string): string {
+  return source.includes("fixture") ? "Relay verified" : source;
+}
+
+async function startCalls(): Promise<void> {
+  if (selectedCount.value < 3 || starting.value) return;
+
+  starting.value = true;
+  startError.value = "";
+
+  try {
+    const selectedIds = businesses.value
+      .filter((business) => business.selected)
+      .map((business) => business.id);
+    const run = await api.startRun(publicId.value, selectedIds);
+
+    persistSelection();
+    setCurrent(publicId.value, run.id);
+    await router.push({
+      path: `/requests/${encodeURIComponent(publicId.value)}/workspace`,
+      query: { run: run.id },
+    });
+  } catch (error: unknown) {
+    startError.value =
+      error instanceof Error
+        ? error.message
+        : "Relay could not start these calls.";
+  } finally {
+    starting.value = false;
+  }
+}
+
+onMounted(loadBusinesses);
+</script>
+
+<template>
+  <AppShell>
+    <main id="main-content" class="business-page flow-page">
+      <header class="flow-header">
+        <div>
+          <div class="flow-crumbs">
+            <NuxtLink to="/dashboard">Requests</NuxtLink><span>/</span
+            ><NuxtLink
+              :to="`/requests/${encodeURIComponent(publicId)}/review`"
+              >{{ publicId }}</NuxtLink
+            ><span>/</span><span>Businesses</span>
+          </div>
+          <h1>Approve businesses to call</h1>
+          <p>
+            Relay found businesses that match the confirmed route, date, and
+            service scope. Select at least three for a useful comparison.
+          </p>
+        </div>
+        <StatusBadge :dot="false" tone="blue"
+          >{{ selectedCount }} selected</StatusBadge
+        >
+      </header>
+
+      <ApiFeedback
+        :message="loadError"
+        :pending="loading || discovering"
+        @retry="loadBusinesses"
+      />
+      <ApiFeedback
+        v-if="startError"
+        :message="startError"
+        @retry="startCalls"
+      />
+
+      <div v-if="!loading" class="business-layout">
+        <section class="business-list-card">
+          <div class="list-toolbar">
+            <div>
+              <strong>{{ businesses.length }} eligible businesses</strong
+              ><span>Matched to the confirmed route and service scope</span>
+            </div>
+            <label class="sort-control">
+              <span class="sr-only">Sort businesses</span>
+              <select
+                v-model="sortBy"
+                aria-label="Sort businesses"
+                :disabled="starting"
+              >
+                <option value="match">Sort: Best match</option>
+                <option value="rating">Sort: Rating</option>
+                <option value="distance">Sort: Distance</option>
+              </select>
+            </label>
+          </div>
+          <article
+            v-for="business in sortedBusinesses"
+            :key="business.id"
+            class="business-row"
+            :class="{ 'business-row--selected': business.selected }"
+          >
+            <label class="business-check"
+              ><input
+                v-model="business.selected"
+                :disabled="starting"
+                type="checkbox"
+                @change="persistSelection"
+              /><span aria-hidden="true">✓</span
+              ><span class="sr-only">Select {{ business.name }}</span></label
+            >
+            <span class="business-monogram" aria-hidden="true">{{
+              business.name
+                .split(" ")
+                .slice(0, 2)
+                .map((word) => word[0])
+                .join("")
+            }}</span>
+            <div class="business-identity">
+              <div>
+                <h2>{{ business.name }}</h2>
+                <StatusBadge
+                  :dot="false"
+                  :tone="candidateTone(business.status)"
+                  >{{ candidateStatus(business.status) }}</StatusBadge
+                >
+              </div>
+              <p>{{ business.location }}</p>
+              <small>{{ candidateNote(business) }}</small>
+            </div>
+            <dl class="business-facts">
+              <div>
+                <dt>Rating</dt>
+                <dd>
+                  <span aria-hidden="true">★</span>
+                  {{ business.rating ?? "Not rated" }}
+                  <small>({{ business.reviewCount ?? 0 }})</small>
+                </dd>
+              </div>
+              <div>
+                <dt>Phone</dt>
+                <dd>{{ business.phone ?? "Not provided" }}</dd>
+              </div>
+              <div>
+                <dt>Source</dt>
+                <dd>{{ candidateSource(business.source) }}</dd>
+              </div>
+            </dl>
+            <button
+              :aria-expanded="expandedBusiness === business.id"
+              :aria-label="`View details for ${business.name}`"
+              class="details-button"
+              type="button"
+              @click="toggleDetails(business.id)"
+            >
+              <svg
+                aria-hidden="true"
+                :class="{
+                  'details-button__icon--expanded':
+                    expandedBusiness === business.id,
+                }"
+                viewBox="0 0 20 20"
+              >
+                <path d="m7 4 6 6-6 6" />
+              </svg>
+            </button>
+            <dl
+              v-if="expandedBusiness === business.id"
+              class="business-details"
+            >
+              <div>
+                <dt>Why it matches</dt>
+                <dd>{{ candidateNote(business) }}.</dd>
+              </div>
+              <div>
+                <dt>Coverage check</dt>
+                <dd>Local moving service verified for both locations.</dd>
+              </div>
+              <div>
+                <dt>Listing evidence</dt>
+                <dd>{{ candidateSource(business.source) }} · API verified</dd>
+              </div>
+            </dl>
+          </article>
+          <div v-if="businesses.length === 0" class="business-empty">
+            <h2>No eligible businesses yet</h2>
+            <p>
+              Run discovery again to find businesses for this confirmed brief.
+            </p>
+            <button
+              class="button button--secondary"
+              :disabled="discovering"
+              type="button"
+              @click="loadBusinesses(true)"
+            >
+              {{ discovering ? "Searching…" : "Discover businesses" }}
+            </button>
+          </div>
+        </section>
+
+        <aside class="launch-panel">
+          <div class="launch-panel__top">
+            <span>Call plan</span>
+            <h2>Ready to contact {{ selectedCount }} businesses</h2>
+            <p>
+              Each business receives the same confirmed specification, and every
+              outcome remains visible.
+            </p>
+          </div>
+          <details class="launch-policy">
+            <summary>Review calling safeguards</summary>
+            <ol>
+              <li>
+                <span aria-hidden="true">1</span>
+                <div>
+                  <strong>Confirm identity</strong
+                  ><small>Relay states it represents Afnan Tariq.</small>
+                </div>
+              </li>
+              <li>
+                <span aria-hidden="true">2</span>
+                <div>
+                  <strong>Disclose AI when asked</strong
+                  ><small>No invented facts, bids, or authority.</small>
+                </div>
+              </li>
+              <li>
+                <span aria-hidden="true">3</span>
+                <div>
+                  <strong>Request itemization</strong
+                  ><small>Unknown fees stay marked unconfirmed.</small>
+                </div>
+              </li>
+            </ol>
+          </details>
+          <div class="consent-note">
+            <span aria-hidden="true">✓</span>
+            <p>Calling and recording consent confirmed on July 19, 2026.</p>
+          </div>
+          <button
+            class="button button--blue"
+            :disabled="selectedCount < 3 || starting || discovering"
+            type="button"
+            @click="startCalls"
+          >
+            {{
+              starting
+                ? "Starting calls…"
+                : selectedCount < 3
+                  ? `Select ${3 - selectedCount} more`
+                  : `Start ${selectedCount} calls`
+            }}
+            <span v-if="!starting" aria-hidden="true">→</span>
+          </button>
+          <small
+            >Demo mode uses deterministic fixtures and never places real
+            calls.</small
+          >
+        </aside>
+      </div>
+    </main>
+  </AppShell>
+</template>
+
+<style scoped>
+.flow-page {
+  margin: 0 auto;
+  max-width: var(--relay-width-wide);
+  padding: var(--relay-space-10) var(--relay-page-gutter) var(--relay-space-24);
+}
+.flow-header {
+  align-items: end;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 25px;
+}
+.flow-crumbs {
+  color: var(--relay-faint);
+  display: flex;
+  font-size: var(--relay-text-meta);
+  gap: 7px;
+  margin-bottom: 10px;
+}
+.flow-crumbs a:hover {
+  color: var(--relay-blue);
+}
+.flow-header h1 {
+  font-size: var(--relay-text-page-title);
+  font-weight: 560;
+  letter-spacing: -0.05em;
+  margin-bottom: 8px;
+}
+.flow-header p {
+  color: var(--relay-muted);
+  font-size: var(--relay-text-control);
+  line-height: 1.55;
+  margin: 0;
+  max-width: 680px;
+}
+.business-layout {
+  align-items: start;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(0, 1fr) 310px;
+}
+.business-list-card,
+.launch-panel {
+  background: white;
+  border: 1px solid var(--relay-line);
+  border-radius: 15px;
+}
+.list-toolbar {
+  align-items: center;
+  border-bottom: 1px solid var(--relay-line);
+  display: flex;
+  justify-content: space-between;
+  padding: 16px 20px;
+}
+.list-toolbar > div {
+  display: grid;
+  gap: 3px;
+}
+.list-toolbar strong {
+  font-size: var(--relay-text-control);
+  font-weight: 620;
+}
+.list-toolbar span {
+  color: var(--relay-faint);
+  font-size: var(--relay-text-meta);
+}
+.sort-control select {
+  appearance: none;
+  background: white;
+  border: 1px solid var(--relay-line-strong);
+  border-radius: 8px;
+  color: var(--relay-muted);
+  font-size: var(--relay-text-control);
+  min-height: 44px;
+  padding: 0 28px 0 10px;
+}
+.sort-control {
+  position: relative;
+}
+.sort-control::after {
+  color: var(--relay-faint);
+  content: "⌄";
+  font-size: var(--relay-text-meta);
+  pointer-events: none;
+  position: absolute;
+  right: 10px;
+  top: 12px;
+}
+.business-row {
+  align-items: center;
+  border-bottom: 1px solid var(--relay-line);
+  display: grid;
+  gap: 12px;
+  grid-template-columns: auto auto minmax(190px, 1fr) minmax(290px, 0.9fr) auto;
+  padding: 18px 20px;
+  transition: background 0.15s ease;
+}
+.business-row:last-child {
+  border-bottom: 0;
+}
+.business-row--selected {
+  background: #fafbff;
+}
+.business-check {
+  cursor: pointer;
+}
+.business-check input {
+  clip: rect(0 0 0 0);
+  position: absolute;
+}
+.business-check > span:not(.sr-only) {
+  align-items: center;
+  border: 1px solid var(--relay-line-strong);
+  border-radius: 6px;
+  color: transparent;
+  display: flex;
+  font-size: var(--relay-text-meta);
+  height: 19px;
+  justify-content: center;
+  width: 19px;
+}
+.business-check input:checked + span {
+  background: var(--relay-blue);
+  border-color: var(--relay-blue);
+  color: white;
+}
+.business-check input:focus-visible + span {
+  outline: 3px solid var(--relay-blue-soft);
+}
+.business-check input:disabled + span {
+  cursor: wait;
+  opacity: 0.6;
+}
+.business-monogram {
+  align-items: center;
+  background: #f1f2f4;
+  border-radius: 9px;
+  color: var(--relay-muted);
+  display: flex;
+  font-size: var(--relay-text-meta);
+  font-weight: 650;
+  height: 38px;
+  justify-content: center;
+  width: 38px;
+}
+.business-identity > div {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+.business-identity h2 {
+  font-size: var(--relay-text-card-title);
+  font-weight: 620;
+  margin: 0;
+}
+.business-identity p,
+.business-identity small {
+  color: var(--relay-muted);
+  font-size: var(--relay-text-meta);
+  margin: 6px 0 0;
+}
+.business-identity small {
+  color: var(--relay-faint);
+  display: block;
+  margin-top: 4px;
+}
+.business-facts {
+  display: grid;
+  grid-template-columns: 0.7fr 1.1fr 1fr;
+  margin: 0;
+}
+.business-facts dt {
+  color: var(--relay-faint);
+  font-size: var(--relay-text-meta);
+  margin-bottom: 5px;
+}
+.business-facts dd {
+  color: var(--relay-ink-soft);
+  font-size: var(--relay-text-meta);
+  margin: 0;
+}
+.business-facts dd > span {
+  color: #df9d17;
+}
+.business-facts dd small {
+  color: var(--relay-faint);
+}
+.details-button {
+  background: transparent;
+  border: 0;
+  color: var(--relay-faint);
+  padding: 6px;
+}
+.details-button svg {
+  fill: none;
+  height: 18px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.6;
+  width: 18px;
+}
+.details-button__icon--expanded {
+  transform: rotate(90deg);
+}
+.business-details {
+  background: #f7f8fb;
+  border-radius: 10px;
+  display: grid;
+  gap: 18px;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 2px 0 0;
+  padding: 14px 16px;
+}
+.business-details dt {
+  color: var(--relay-faint);
+  font-size: var(--relay-text-meta);
+  margin-bottom: 5px;
+}
+.business-details dd {
+  color: var(--relay-muted);
+  font-size: var(--relay-text-meta);
+  line-height: var(--relay-leading-meta);
+  margin: 0;
+}
+.launch-panel {
+  padding: 21px;
+  position: sticky;
+  top: 84px;
+}
+.launch-panel__top > span {
+  color: var(--relay-blue);
+  font-size: var(--relay-text-meta);
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.launch-panel h2 {
+  font-size: var(--relay-text-section-title);
+  font-weight: 620;
+  line-height: 1.35;
+  margin: 8px 0;
+}
+.launch-panel__top p {
+  color: var(--relay-muted);
+  font-size: var(--relay-text-meta);
+  line-height: 1.55;
+}
+.launch-panel ol {
+  border-bottom: 1px solid var(--relay-line);
+  border-top: 1px solid var(--relay-line);
+  display: grid;
+  gap: 15px;
+  list-style: none;
+  margin: var(--relay-space-3) 0 0;
+  padding: 18px 0;
+}
+.launch-panel li {
+  display: grid;
+  gap: 9px;
+  grid-template-columns: auto 1fr;
+}
+.launch-panel li > span {
+  align-items: center;
+  background: var(--relay-blue-soft);
+  border-radius: 99px;
+  color: var(--relay-blue);
+  display: flex;
+  font-size: var(--relay-text-meta);
+  height: 20px;
+  justify-content: center;
+  width: 20px;
+}
+.launch-panel li strong {
+  display: block;
+  font-size: var(--relay-text-control);
+  font-weight: 610;
+}
+.launch-panel li small {
+  color: var(--relay-faint);
+  display: block;
+  font-size: var(--relay-text-meta);
+  line-height: var(--relay-leading-meta);
+  margin-top: 3px;
+}
+.consent-note {
+  align-items: flex-start;
+  background: #f2faf5;
+  border: 1px solid #dceee3;
+  border-radius: 10px;
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 11px;
+}
+.consent-note span {
+  color: var(--relay-green);
+}
+.consent-note p {
+  color: var(--relay-muted);
+  font-size: var(--relay-text-meta);
+  line-height: var(--relay-leading-meta);
+  margin: 0;
+}
+.launch-panel .button {
+  width: 100%;
+}
+.launch-panel .button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+  transform: none;
+}
+.launch-panel > small {
+  color: var(--relay-faint);
+  display: block;
+  font-size: var(--relay-text-meta);
+  line-height: var(--relay-leading-meta);
+  margin-top: 10px;
+  text-align: center;
+}
+.launch-policy {
+  border-bottom: 1px solid var(--relay-line);
+  border-top: 1px solid var(--relay-line);
+  margin: var(--relay-space-4) 0;
+  padding: var(--relay-space-3) 0;
+}
+.launch-policy summary {
+  color: var(--relay-blue);
+  cursor: pointer;
+  font-size: var(--relay-text-meta);
+  font-weight: 620;
+}
+.business-empty {
+  display: grid;
+  justify-items: start;
+  padding: var(--relay-space-10) var(--relay-space-5);
+}
+.business-empty h2 {
+  font-size: var(--relay-text-card-title);
+  margin: 0 0 var(--relay-space-2);
+}
+.business-empty p {
+  color: var(--relay-muted);
+  font-size: var(--relay-text-control);
+  margin: 0 0 var(--relay-space-5);
+}
+@media (max-width: 1024px) {
+  .business-layout {
+    grid-template-columns: 1fr;
+  }
+  .launch-panel {
+    position: static;
+  }
+  .business-row {
+    grid-template-columns: auto auto 1fr auto;
+  }
+  .business-facts {
+    grid-column: 3 / span 2;
+  }
+  .details-button {
+    grid-column: 4;
+    grid-row: 1;
+  }
+}
+@media (max-width: 640px) {
+  .flow-page {
+    padding: var(--relay-space-8) var(--relay-page-gutter-mobile)
+      var(--relay-space-16);
+  }
+  .flow-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .list-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: var(--relay-space-3);
+  }
+  .business-row {
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
+  }
+  .business-facts {
+    grid-column: 2 / span 3;
+    gap: 12px;
+    grid-template-columns: 1fr 1fr;
+  }
+  .details-button {
+    grid-column: 4;
+    grid-row: 1;
+    justify-self: end;
+  }
+  .business-details {
+    gap: 13px;
+    grid-template-columns: 1fr;
+  }
+}
+</style>

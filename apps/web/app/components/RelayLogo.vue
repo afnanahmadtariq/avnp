@@ -2,18 +2,17 @@
 withDefaults(
   defineProps<{
     compact?: boolean;
-    inverse?: boolean;
   }>(),
   {
     compact: false,
-    inverse: false,
   },
 );
 </script>
 
 <template>
-  <span class="relay-logo" :class="{ 'relay-logo--inverse': inverse }">
+  <span class="relay-logo">
     <img
+      v-if="compact"
       alt=""
       aria-hidden="true"
       class="relay-logo__mark"
@@ -21,7 +20,14 @@ withDefaults(
       src="/brand/relay-mark.svg"
       width="29"
     />
-    <span v-if="!compact" class="relay-logo__word">Relay</span>
+    <img
+      v-else
+      alt="Relay"
+      class="relay-logo__lockup"
+      height="32"
+      src="/brand/relay-lockup.svg"
+      width="114"
+    />
   </span>
 </template>
 
@@ -41,13 +47,9 @@ withDefaults(
   width: 29px;
 }
 
-.relay-logo__word {
-  font-size: 1rem;
-  font-weight: 600;
-  letter-spacing: -0.035em;
-}
-
-.relay-logo--inverse .relay-logo__word {
-  color: #ffffff;
+.relay-logo__lockup {
+  display: block;
+  height: 32px;
+  width: 114px;
 }
 </style>

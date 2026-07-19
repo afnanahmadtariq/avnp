@@ -49,7 +49,7 @@ Default endpoints:
 docker compose -f infra/compose.yaml up -d
 ```
 
-This starts PostgreSQL 18.4 on port 5432 and Redis on port 6379 using local-only development credentials from `.env.example`. PostgreSQL 18 stores its versioned data directory beneath `/var/lib/postgresql`, which is the named-volume mount used by the Compose service. Local database data is disposable; no migration path from earlier local database versions is maintained.
+This starts PostgreSQL 18.4 on port 5432 and Redis on port 6379 using local-only development credentials from `.env.example`. PostgreSQL 18 stores its versioned data directory beneath `/var/lib/postgresql`, which is the named-volume mount used by the Compose service. Local database data is disposable; older local database directories are deliberately unsupported.
 
 ## Quality gate
 

@@ -96,7 +96,7 @@ const emit = defineEmits<{
 
 .quote-table thead th {
   color: var(--relay-faint);
-  font-size: 0.66rem;
+  font-size: var(--relay-text-meta);
   font-weight: 560;
   letter-spacing: 0.055em;
   padding-bottom: 11px;
@@ -145,7 +145,7 @@ const emit = defineEmits<{
 .quote-table s {
   color: var(--relay-faint);
   display: block;
-  font-size: 0.65rem;
+  font-size: var(--relay-text-meta);
   margin-top: 3px;
 }
 
@@ -159,9 +159,9 @@ const emit = defineEmits<{
   border: 1px solid var(--relay-line-strong);
   border-radius: 9px;
   color: var(--relay-ink-soft);
-  font-size: 0.7rem;
+  font-size: var(--relay-text-control);
   font-weight: 560;
-  min-height: 34px;
+  min-height: 44px;
   padding: 0 11px;
 }
 
@@ -171,7 +171,7 @@ const emit = defineEmits<{
   color: var(--relay-blue);
 }
 
-@media (max-width: 720px) {
+@media (max-width: 768px) {
   .quote-table-wrap {
     margin: 0 -4px;
     padding-bottom: 6px;

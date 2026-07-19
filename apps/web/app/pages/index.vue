@@ -52,8 +52,8 @@ const steps = [
           <a href="#safety">Principles</a>
         </nav>
 
-        <NuxtLink class="header-demo-link" to="/workspace">
-          Open live demo <span aria-hidden="true">↗</span>
+        <NuxtLink class="header-demo-link" to="/dashboard">
+          Open dashboard <span aria-hidden="true">↗</span>
         </NuxtLink>
       </div>
     </header>
@@ -74,8 +74,8 @@ const steps = [
           </p>
 
           <div class="hero__actions">
-            <NuxtLink class="button button--blue" to="/workspace">
-              Explore a live negotiation <span aria-hidden="true">→</span>
+            <NuxtLink class="button button--blue" to="/start">
+              Start your brief <span aria-hidden="true">→</span>
             </NuxtLink>
             <a class="button button--secondary" href="#how-it-works">
               See how it works
@@ -84,14 +84,11 @@ const steps = [
 
           <p class="hero__note">
             <span aria-hidden="true">✓</span>
-            No signup required for the interactive demo
+            Start with a two-minute guided brief
           </p>
         </div>
 
         <div class="hero__product">
-          <div aria-hidden="true" class="hero__product-label">
-            A real decision, not another chatbot
-          </div>
           <MarketingHeroWorkspacePreview />
         </div>
       </section>
@@ -256,8 +253,8 @@ const steps = [
             <p class="eyebrow">See the full loop</p>
             <h2>From “what do I ask?” to “this is the one.”</h2>
           </div>
-          <NuxtLink class="button button--blue" to="/workspace">
-            Open the Relay workspace <span aria-hidden="true">→</span>
+          <NuxtLink class="button button--blue" to="/start">
+            Start a guided brief <span aria-hidden="true">→</span>
           </NuxtLink>
         </div>
       </section>
@@ -269,7 +266,7 @@ const steps = [
         <p>Your AI negotiator. Evidence first.</p>
         <div>
           <a href="#how-it-works">How it works</a>
-          <NuxtLink to="/workspace">Live demo</NuxtLink>
+          <NuxtLink to="/start">Start a brief</NuxtLink>
         </div>
       </div>
     </footer>
@@ -323,9 +320,9 @@ const steps = [
   display: grid;
   gap: clamp(52px, 8vw, 108px);
   grid-template-columns: minmax(0, 1.03fr) minmax(410px, 0.82fr);
-  min-height: 690px;
-  padding-bottom: 106px;
-  padding-top: 86px;
+  min-height: 640px;
+  padding-bottom: 86px;
+  padding-top: 70px;
 }
 
 .launch-note {
@@ -335,7 +332,7 @@ const steps = [
   border-radius: 999px;
   color: var(--relay-muted);
   display: inline-flex;
-  font-size: 0.7rem;
+  font-size: var(--relay-text-meta);
   gap: 8px;
   margin-bottom: 26px;
   padding: 7px 11px;
@@ -351,10 +348,10 @@ const steps = [
 }
 
 .hero h1 {
-  font-size: clamp(3.5rem, 6.2vw, 5.9rem);
-  font-weight: 510;
-  letter-spacing: -0.065em;
-  line-height: 0.94;
+  font-size: clamp(3rem, 5vw, 4.65rem);
+  font-weight: 540;
+  letter-spacing: -0.055em;
+  line-height: 0.98;
   margin-bottom: 28px;
   max-width: 710px;
 }
@@ -375,7 +372,7 @@ const steps = [
 
 .hero__note {
   color: var(--relay-faint);
-  font-size: 0.7rem;
+  font-size: var(--relay-text-meta);
   margin: 15px 0 0 4px;
 }
 
@@ -387,30 +384,6 @@ const steps = [
 .hero__product {
   min-width: 0;
   position: relative;
-}
-
-.hero__product::before,
-.hero__product::after {
-  border: 1px solid var(--relay-line-strong);
-  border-radius: 22px;
-  content: "";
-  inset: 8px -8px -8px 8px;
-  position: absolute;
-  z-index: -1;
-}
-
-.hero__product::after {
-  inset: 16px -16px -16px 16px;
-  opacity: 0.45;
-}
-
-.hero__product-label {
-  color: var(--relay-faint);
-  font-size: 0.66rem;
-  letter-spacing: 0.04em;
-  margin-bottom: 12px;
-  text-align: right;
-  text-transform: uppercase;
 }
 
 .outcomes {
@@ -425,7 +398,7 @@ const steps = [
   color: var(--relay-muted);
   display: flex;
   flex-wrap: wrap;
-  font-size: 0.72rem;
+  font-size: var(--relay-text-meta);
   gap: 12px;
   justify-content: center;
   margin-bottom: 38px;
@@ -460,7 +433,7 @@ const steps = [
 .outcomes article > span,
 .outcomes small {
   color: var(--relay-faint);
-  font-size: 0.66rem;
+  font-size: var(--relay-text-meta);
 }
 
 .outcomes strong {
@@ -517,7 +490,7 @@ const steps = [
 
 .step-card__number {
   color: var(--relay-blue);
-  font-size: 0.7rem;
+  font-size: var(--relay-text-meta);
   font-variant-numeric: tabular-nums;
   font-weight: 590;
 }
@@ -598,7 +571,7 @@ const steps = [
   align-items: center;
   color: rgb(255 255 255 / 52%);
   display: flex;
-  font-size: 0.72rem;
+  font-size: var(--relay-text-meta);
   justify-content: space-between;
 }
 
@@ -622,7 +595,7 @@ const steps = [
 
 .proof-card__result span {
   color: rgb(255 255 255 / 52%);
-  font-size: 0.7rem;
+  font-size: var(--relay-text-meta);
 }
 
 .proof-card__result strong {
@@ -634,7 +607,7 @@ const steps = [
 .proof-card__label {
   color: var(--relay-blue);
   display: block;
-  font-size: 0.68rem;
+  font-size: var(--relay-text-meta);
   font-weight: 590;
   letter-spacing: 0.08em;
   margin-bottom: 24px;
@@ -667,7 +640,7 @@ const steps = [
 
 .mini-quote small {
   color: var(--relay-faint);
-  font-size: 0.66rem;
+  font-size: var(--relay-text-meta);
   grid-column: 1 / -1;
 }
 
@@ -692,7 +665,7 @@ const steps = [
 
 .proof-card--evidence li > span:first-child {
   color: var(--relay-faint);
-  font-size: 0.62rem;
+  font-size: var(--relay-text-meta);
 }
 
 .proof-card--evidence li > span:last-child {
@@ -711,7 +684,7 @@ const steps = [
 
 .proof-card--evidence small {
   color: var(--relay-faint);
-  font-size: 0.65rem;
+  font-size: var(--relay-text-meta);
   margin-top: 3px;
 }
 
@@ -754,7 +727,7 @@ const steps = [
   border-radius: 999px;
   color: var(--relay-green);
   display: inline-flex;
-  font-size: 0.65rem;
+  font-size: var(--relay-text-meta);
   height: 24px;
   justify-content: center;
   width: 24px;
@@ -798,7 +771,7 @@ const steps = [
   align-items: center;
   color: var(--relay-muted);
   display: grid;
-  font-size: 0.7rem;
+  font-size: var(--relay-text-meta);
   grid-template-columns: 1fr auto 1fr;
   min-height: 120px;
 }
@@ -817,7 +790,7 @@ const steps = [
   color: var(--relay-ink);
 }
 
-@media (max-width: 960px) {
+@media (max-width: 1024px) {
   .marketing-header__inner {
     grid-template-columns: 1fr auto;
   }
@@ -887,16 +860,11 @@ const steps = [
   }
 
   .hero h1 {
-    font-size: clamp(3rem, 16vw, 4.25rem);
+    font-size: clamp(2.75rem, 13vw, 3.25rem);
   }
 
   .hero__actions {
     display: grid;
-  }
-
-  .hero__product::before,
-  .hero__product::after {
-    display: none;
   }
 
   .outcomes__intro {

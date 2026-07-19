@@ -36,6 +36,7 @@ This directory separates current decisions from the unchanged planning files tha
 
 - [Brand and experience direction](design/brand.md)
 - [Design tokens](design/tokens.md)
+- [UI architecture and user flows](design/ui-architecture.md)
 
 ### Development and operations
 

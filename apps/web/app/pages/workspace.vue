@@ -1,15 +1,28 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
+import ApiFeedback from "../components/app/ApiFeedback.vue";
 import WorkspaceQuoteComparison from "../components/workspace/QuoteComparison.vue";
+import { useRelayApi } from "../composables/useRelayApi";
+import { useRequestContext } from "../composables/useRequestContext";
+import { useDecisionSelection } from "../composables/useDecisionSelection";
 import {
-  moveBrief,
-  negotiations,
-  quotes,
-  recommendation,
-  sessionActivity,
+  moveBrief as demoMoveBrief,
+  negotiations as demoNegotiations,
+  quotes as demoQuotes,
+  recommendation as demoRecommendation,
+  sessionActivity as demoSessionActivity,
+  type Negotiation,
   type NegotiationTone,
+  type Quote,
 } from "../data/demo";
+import type {
+  JobDetail,
+  RunCall,
+  RunEvent,
+  RunQuote,
+  RunSnapshot,
+} from "../types/api";
 import { formatCurrency } from "../utils/currency";
 
 useSeoMeta({
@@ -19,33 +32,361 @@ useSeoMeta({
   title: "Charlotte move · Relay workspace",
 });
 
-const activeNegotiationId = ref(negotiations[0]?.id ?? "");
-const selectedQuoteId = ref<string>(recommendation.quoteId);
+const { publicId, runId, setCurrent } = useRequestContext();
+const activeNegotiationId = ref(demoNegotiations[0]?.id ?? "");
 const callsPaused = ref(false);
-const decisionSaved = ref(false);
+const apiError = ref("");
+const apiPending = ref(false);
+const controlPending = ref(false);
+const decisionPending = ref(false);
+const job = ref<JobDetail>();
+const run = ref<RunSnapshot>();
+const runEvents = ref<RunEvent[]>([]);
+const { decisionSaved, markDecisionSaved, selectedQuoteId, selectQuote } =
+  useDecisionSelection();
+let pollTimer: number | undefined;
+
+function initials(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("");
+}
+
+function callTone(call: RunCall): NegotiationTone {
+  if (call.status === "completed") return "complete";
+  if (["dialing", "in_progress", "negotiating"].includes(call.status)) {
+    return "live";
+  }
+  return "received";
+}
+
+function callStatus(call: RunCall): string {
+  const labels: Record<string, string> = {
+    cancelled: "Call cancelled",
+    completed:
+      call.outcome === "quote_received" ? "Quote received" : "Complete",
+    dialing: "Dialing",
+    failed: "Call failed",
+    in_progress: "Gathering details",
+    negotiating: "Negotiating live",
+    queued: "Queued",
+  };
+
+  return labels[call.status] ?? call.status.replaceAll("_", " ");
+}
+
+function transcriptEntries(call: RunCall): Negotiation["transcript"] {
+  const lines = call.transcript
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  return (
+    lines.length > 0 ? lines : ["Relay: Waiting for transcript updates."]
+  ).map((line, index) => {
+    const businessLine = /^business:/i.test(line);
+
+    return {
+      at: `00:${String(index + 1).padStart(2, "0")}`,
+      speaker: businessLine ? ("Business" as const) : ("Relay" as const),
+      text: line.replace(/^(relay|business):\s*/i, ""),
+    };
+  });
+}
+
+function mapCall(call: RunCall): Negotiation {
+  return {
+    id: call.id,
+    company: call.businessName,
+    initials: initials(call.businessName),
+    status: callStatus(call),
+    tone: callTone(call),
+    initialOffer: (call.initialOfferCents ?? call.currentOfferCents ?? 0) / 100,
+    currentOffer: (call.currentOfferCents ?? call.initialOfferCents ?? 0) / 100,
+    progress: call.progress,
+    lastUpdate: call.status === "completed" ? "Complete" : "Just now",
+    strategy:
+      call.status === "negotiating"
+        ? "Comparable price and terms"
+        : "Verified itemization",
+    summary:
+      call.outcome === "quote_received"
+        ? "Relay confirmed the price and requested the same itemized scope used for every business."
+        : "Relay is keeping the confirmed scope fixed while it gathers a structured outcome.",
+    transcript: transcriptEntries(call),
+    evidence: call.evidence.map((item, index) => ({
+      id: `${call.id}-evidence-${index}`,
+      label: item,
+      detail: "Persisted by Relay for this negotiation run.",
+      source: "Deterministic call evidence",
+    })),
+  };
+}
+
+function mapQuote(quote: RunQuote, recommendedQuoteId?: string): Quote {
+  return {
+    id: quote.id,
+    company: quote.businessName,
+    total: quote.totalCents / 100,
+    initialTotal: (quote.originalTotalCents ?? quote.totalCents) / 100,
+    rating: 0,
+    reviewCount: 0,
+    arrival: quote.arrivalWindow ?? "Confirmed with business",
+    deposit:
+      quote.depositCents === undefined
+        ? "Not confirmed"
+        : `${Math.round((quote.depositCents / quote.totalCents) * 100)}%`,
+    duration: "Scope confirmed",
+    included:
+      quote.inclusions.length > 0
+        ? quote.inclusions
+        : ["Confirmed moving scope"],
+    fees: [{ label: "All-in quoted total", amount: quote.totalCents / 100 }],
+    evidenceCount: quote.evidenceCount,
+    score: quote.score ?? Math.round(quote.confidence * 100),
+    ...(quote.id === recommendedQuoteId ? { recommended: true } : {}),
+  };
+}
+
+const moveBrief = computed(() => {
+  const detail = job.value;
+
+  if (!detail) {
+    return {
+      ...demoMoveBrief,
+      destination: "Charlotte, NC",
+      pickup: "Rock Hill, SC",
+    };
+  }
+
+  const specification = detail.draft;
+  return {
+    id: detail.publicId,
+    title: detail.title,
+    pickup: specification.pickupAddress.formattedAddress,
+    destination: specification.dropoffAddress.formattedAddress,
+    route: `${specification.pickupAddress.formattedAddress} → ${specification.dropoffAddress.formattedAddress}`,
+    date: new Intl.DateTimeFormat("en-US", { dateStyle: "long" }).format(
+      new Date(`${specification.movingDate}T12:00:00`),
+    ),
+    window: "Confirmed with each business",
+    budget: (specification.budget?.amountMinor ?? 0) / 100,
+    home: `${specification.bedrooms}-bedroom move`,
+    access: specification.hasElevator
+      ? "Elevator access confirmed"
+      : "Stair access confirmed",
+    inventory: specification.inventory
+      .map((item) => `${item.quantity} ${item.name}`)
+      .join(" · "),
+    notes: specification.notes ?? "No additional notes.",
+  };
+});
+
+const negotiations = computed<Negotiation[]>(() =>
+  run.value?.calls.length ? run.value.calls.map(mapCall) : demoNegotiations,
+);
+
+const recommendationQuoteId = computed(() => {
+  const best = [...(run.value?.quotes ?? [])].sort(
+    (left, right) => (right.score ?? 0) - (left.score ?? 0),
+  )[0];
+  return best?.id;
+});
+
+const quotes = computed<Quote[]>(() =>
+  run.value?.quotes.length
+    ? run.value.quotes.map((quote) =>
+        mapQuote(quote, recommendationQuoteId.value),
+      )
+    : demoQuotes,
+);
+
+const recommendation = computed(() => {
+  const quote = quotes.value.find(
+    (candidate) => candidate.id === recommendationQuoteId.value,
+  );
+
+  if (!run.value || !quote) return demoRecommendation;
+
+  return {
+    quoteId: quote.id,
+    savings: Math.max(0, quote.initialTotal - quote.total),
+    confidence: quote.score,
+    headline: `${quote.company} is the strongest verified value`,
+    rationale: [
+      "The confirmed scope is consistent across businesses",
+      `${quote.evidenceCount} evidence points support this offer`,
+      "Unknown fees remain visible rather than becoming zero",
+      "The recommendation uses price, completeness, confidence, and risk",
+    ],
+  };
+});
+
+const sessionActivity = computed(() =>
+  runEvents.value.length
+    ? runEvents.value.slice(0, 5).map((event) => ({
+        at: new Intl.DateTimeFormat("en-US", {
+          hour: "numeric",
+          minute: "2-digit",
+        }).format(new Date(event.at)),
+        label: event.message,
+        company: event.callId ? "Call update" : "Relay",
+      }))
+    : demoSessionActivity,
+);
 
 const activeNegotiation = computed(
   () =>
-    negotiations.find(
+    negotiations.value.find(
       (negotiation) => negotiation.id === activeNegotiationId.value,
-    ) ?? negotiations[0],
+    ) ?? negotiations.value[0],
 );
 
 const recommendedQuote = computed(
   () =>
-    quotes.find((quote) => quote.id === recommendation.quoteId) ?? quotes[0],
+    quotes.value.find((quote) => quote.id === recommendation.value.quoteId) ??
+    quotes.value[0],
 );
 
 const selectedQuote = computed(
   () =>
-    quotes.find((quote) => quote.id === selectedQuoteId.value) ??
+    quotes.value.find((quote) => quote.id === selectedQuoteId.value) ??
     recommendedQuote.value,
 );
 
 const completedCalls = computed(
   () =>
-    negotiations.filter((negotiation) => negotiation.progress === 100).length,
+    negotiations.value.filter((negotiation) => negotiation.progress === 100)
+      .length,
 );
+const verifiedEvidenceCount = computed(() =>
+  negotiations.value.reduce(
+    (total, negotiation) => total + negotiation.evidence.length,
+    0,
+  ),
+);
+const runComplete = computed(() =>
+  ["cancelled", "completed", "failed", "partially_completed"].includes(
+    run.value?.status ?? "",
+  ),
+);
+const reportLink = computed(() => {
+  const query = run.value?.id ? `?run=${encodeURIComponent(run.value.id)}` : "";
+
+  return `/requests/${encodeURIComponent(publicId.value)}/report${query}`;
+});
+
+watch(
+  negotiations,
+  (items) => {
+    if (!items.some((item) => item.id === activeNegotiationId.value)) {
+      activeNegotiationId.value = items[0]?.id ?? "";
+    }
+  },
+  { immediate: true },
+);
+
+async function loadWorkspace(silent = false): Promise<void> {
+  if (!silent) apiPending.value = true;
+  apiError.value = "";
+
+  try {
+    const api = useRelayApi();
+    const loadedJob = await api.getJob(publicId.value);
+    const resolvedRunId = runId.value ?? loadedJob.latestRunId;
+
+    job.value = loadedJob;
+
+    if (!resolvedRunId) {
+      apiError.value = "This request does not have a negotiation run yet.";
+      return;
+    }
+
+    const [loadedRun, loadedEvents] = await Promise.all([
+      api.getRun(resolvedRunId),
+      api.getEvents(resolvedRunId),
+    ]);
+
+    if (loadedRun.jobPublicId !== loadedJob.publicId) {
+      throw new Error(
+        "This negotiation run belongs to a different request. Open the request from the dashboard and try again.",
+      );
+    }
+
+    run.value = loadedRun;
+    runEvents.value = loadedEvents.items;
+    callsPaused.value = loadedRun.paused;
+    if (loadedRun.decision?.quoteId) {
+      markDecisionSaved(loadedRun.decision.quoteId);
+    }
+    setCurrent(loadedJob.publicId, loadedRun.id);
+  } catch (error: unknown) {
+    if (!silent) {
+      apiError.value =
+        error instanceof Error
+          ? error.message
+          : "Relay could not load the negotiation run.";
+    }
+  } finally {
+    apiPending.value = false;
+  }
+}
+
+async function toggleCalls(): Promise<void> {
+  const nextPaused = !callsPaused.value;
+  callsPaused.value = nextPaused;
+
+  if (!run.value || controlPending.value) return;
+
+  controlPending.value = true;
+  apiError.value = "";
+
+  try {
+    const updated = await useRelayApi().updateRun(
+      run.value.id,
+      nextPaused ? "pause" : "resume",
+    );
+    run.value = updated;
+    callsPaused.value = updated.paused;
+  } catch (error: unknown) {
+    apiError.value =
+      error instanceof Error
+        ? error.message
+        : "Relay could not update the run.";
+  } finally {
+    controlPending.value = false;
+  }
+}
+
+async function saveRecommendedDecision(): Promise<void> {
+  if (!run.value || !recommendedQuote.value || decisionPending.value) return;
+
+  decisionPending.value = true;
+  apiError.value = "";
+  try {
+    await useRelayApi().saveDecision(run.value.id, recommendedQuote.value.id);
+    markDecisionSaved(recommendedQuote.value.id);
+  } catch (error: unknown) {
+    apiError.value =
+      error instanceof Error
+        ? error.message
+        : "Relay could not save the decision.";
+  } finally {
+    decisionPending.value = false;
+  }
+}
+
+onMounted(() => {
+  void loadWorkspace();
+  pollTimer = window.setInterval(() => void loadWorkspace(true), 5_000);
+});
+
+onBeforeUnmount(() => {
+  if (pollTimer) window.clearInterval(pollTimer);
+});
 
 function badgeTone(
   tone: NegotiationTone,
@@ -54,67 +395,12 @@ function badgeTone(
   if (tone === "live") return callsPaused.value ? "warning" : "live";
   return "neutral";
 }
-
-function selectQuote(quoteId: string): void {
-  selectedQuoteId.value = quoteId;
-  decisionSaved.value = false;
-}
 </script>
 
 <template>
-  <div class="workspace-shell">
-    <header class="workspace-header">
-      <NuxtLink aria-label="Relay home" class="workspace-header__brand" to="/">
-        <RelayLogo />
-      </NuxtLink>
-
-      <div class="workspace-header__session">
-        <span class="workspace-header__divider" />
-        <span>Charlotte move</span>
-        <StatusBadge :dot="false" tone="blue">Demo</StatusBadge>
-      </div>
-
-      <div class="workspace-header__actions">
-        <span class="workspace-header__saved">All changes saved</span>
-        <span aria-label="Demo account" class="avatar-button" role="img">
-          AT
-        </span>
-      </div>
-    </header>
-
-    <aside class="workspace-rail">
-      <nav aria-label="Workspace sections">
-        <a class="rail-link rail-link--active" href="#overview">
-          <span aria-hidden="true">01</span> Overview
-        </a>
-        <a class="rail-link" href="#brief">
-          <span aria-hidden="true">02</span> Move brief
-        </a>
-        <a class="rail-link" href="#negotiations">
-          <span aria-hidden="true">03</span> Negotiations
-          <small>{{ callsPaused ? "paused" : "1 live" }}</small>
-        </a>
-        <a class="rail-link" href="#quotes">
-          <span aria-hidden="true">04</span> Quotes
-        </a>
-        <a class="rail-link" href="#recommendation">
-          <span aria-hidden="true">05</span> Decision
-        </a>
-      </nav>
-
-      <div class="rail-session">
-        <span>Session</span>
-        <strong>{{ moveBrief.id }}</strong>
-        <p>Local demonstration data</p>
-      </div>
-
-      <NuxtLink class="rail-back" to="/">
-        <span aria-hidden="true">←</span> Back to Relay
-      </NuxtLink>
-    </aside>
-
+  <AppShell>
     <main id="main-content" class="workspace-main">
-      <section id="overview" class="session-heading">
+      <section class="session-heading">
         <div>
           <div class="session-heading__crumbs">
             <span>Moves</span><span aria-hidden="true">/</span>
@@ -124,34 +410,61 @@ function selectQuote(quoteId: string): void {
           <p>{{ moveBrief.route }} · {{ moveBrief.date }}</p>
         </div>
         <div class="session-heading__actions">
+          <NuxtLink
+            v-if="runComplete"
+            class="button button--blue"
+            :to="reportLink"
+          >
+            View final report <span aria-hidden="true">→</span>
+          </NuxtLink>
           <button
+            v-else
             :aria-pressed="callsPaused"
             class="button button--secondary"
+            :disabled="controlPending"
             type="button"
-            @click="callsPaused = !callsPaused"
+            @click="toggleCalls"
           >
-            <span aria-hidden="true">{{ callsPaused ? "▶" : "Ⅱ" }}</span>
-            {{ callsPaused ? "Resume calls" : "Pause calls" }}
+            <svg aria-hidden="true" class="pause-icon" viewBox="0 0 20 20">
+              <path v-if="callsPaused" d="m7 5 8 5-8 5V5Z" />
+              <path v-else d="M7 5v10M13 5v10" />
+            </svg>
+            {{
+              controlPending
+                ? "Updating…"
+                : callsPaused
+                  ? "Resume calls"
+                  : "Pause calls"
+            }}
           </button>
         </div>
       </section>
 
-      <div class="mobile-section-nav" aria-label="Jump to workspace section">
-        <a href="#brief">Brief</a>
-        <a href="#negotiations">Calls</a>
-        <a href="#quotes">Quotes</a>
-        <a href="#recommendation">Decision</a>
-      </div>
+      <ApiFeedback
+        :message="apiError"
+        :pending="apiPending"
+        @retry="loadWorkspace"
+      />
 
       <section aria-label="Negotiation progress" class="stage-card card">
         <div class="stage-card__topline">
           <div>
-            <StatusBadge :tone="callsPaused ? 'warning' : 'live'">
-              {{ callsPaused ? "Calls paused" : "Negotiating now" }}
+            <StatusBadge
+              :tone="runComplete ? 'success' : callsPaused ? 'warning' : 'live'"
+            >
+              {{
+                runComplete
+                  ? "Report ready"
+                  : callsPaused
+                    ? "Calls paused"
+                    : "Negotiating now"
+              }}
             </StatusBadge>
-            <span>Started 18 minutes ago</span>
+            <span>{{
+              runComplete ? "All outcomes saved" : "In progress"
+            }}</span>
           </div>
-          <strong>3 of 4 stages complete</strong>
+          <strong>{{ runComplete ? "4" : "3" }} of 4 stages complete</strong>
         </div>
         <ol class="stage-track">
           <li class="stage-track__item stage-track__item--complete">
@@ -168,20 +481,34 @@ function selectQuote(quoteId: string): void {
               <small>12:24 PM</small>
             </div>
           </li>
-          <li class="stage-track__item stage-track__item--current">
-            <span aria-hidden="true">3</span>
+          <li
+            class="stage-track__item"
+            :class="
+              runComplete
+                ? 'stage-track__item--complete'
+                : 'stage-track__item--current'
+            "
+          >
+            <span aria-hidden="true">{{ runComplete ? "✓" : "3" }}</span>
             <div>
               <strong>Negotiating</strong>
               <small>{{
-                callsPaused ? "Calls paused" : "1 call active"
+                runComplete
+                  ? `${completedCalls} calls complete`
+                  : callsPaused
+                    ? "Calls paused"
+                    : "Calls active"
               }}</small>
             </div>
           </li>
-          <li class="stage-track__item">
-            <span aria-hidden="true">4</span>
+          <li
+            class="stage-track__item"
+            :class="{ 'stage-track__item--current': runComplete }"
+          >
+            <span aria-hidden="true">{{ runComplete ? "✓" : "4" }}</span>
             <div>
               <strong>Decision ready</strong>
-              <small>Updating</small>
+              <small>{{ runComplete ? "Ready to review" : "Updating" }}</small>
             </div>
           </li>
         </ol>
@@ -190,56 +517,63 @@ function selectQuote(quoteId: string): void {
       <section aria-label="Session metrics" class="metric-grid">
         <article class="metric-card card">
           <span>Best current offer</span>
-          <strong class="mono-number">{{ formatCurrency(1840) }}</strong>
-          <small class="metric-card__positive">$370 below opening price</small>
+          <strong class="mono-number">{{
+            formatCurrency(recommendedQuote?.total ?? 0)
+          }}</strong>
+          <small class="metric-card__positive"
+            >{{ formatCurrency(recommendation.savings) }} below opening
+            price</small
+          >
         </article>
         <article class="metric-card card">
           <span>Calls completed</span>
-          <strong class="mono-number">{{ completedCalls }}/3</strong>
+          <strong class="mono-number"
+            >{{ completedCalls }}/{{ negotiations.length }}</strong
+          >
           <small>
             {{
-              callsPaused
-                ? "Carolina Transit is paused"
-                : "Carolina Transit is still live"
+              runComplete
+                ? "Every call outcome is saved"
+                : callsPaused
+                  ? "Active calls are paused"
+                  : "Relay is following up live"
             }}
           </small>
         </article>
         <article class="metric-card card">
           <span>Verified evidence</span>
-          <strong class="mono-number">7</strong>
+          <strong class="mono-number">{{ verifiedEvidenceCount }}</strong>
           <small>Across transcripts and quotes</small>
-        </article>
-        <article class="metric-card card">
-          <span>Decision confidence</span>
-          <strong class="mono-number">94%</strong>
-          <small class="metric-card__positive">High confidence</small>
         </article>
       </section>
 
       <div class="workspace-content-grid">
         <div class="workspace-primary">
-          <section id="brief" class="panel card">
-            <header class="panel__header">
+          <details id="brief" class="panel panel--summary card">
+            <summary class="panel__header">
               <div>
                 <span class="panel__eyebrow">Confirmed intake</span>
                 <h2>Move brief</h2>
               </div>
-              <StatusBadge tone="success">Ready for every call</StatusBadge>
-            </header>
+              <span class="panel-summary-status">
+                <StatusBadge tone="success">Confirmed</StatusBadge>
+                <span aria-hidden="true">⌄</span>
+              </span>
+            </summary>
 
             <div class="brief-route">
               <div>
                 <span aria-hidden="true" class="route-dot" />
                 <small>Pickup</small>
-                <strong>Rock Hill, SC</strong>
-                <span>2-bedroom apartment · one flight</span>
+                <strong>{{ moveBrief.pickup }}</strong>
+                <span>{{ moveBrief.home }} · {{ moveBrief.access }}</span>
               </div>
               <span aria-hidden="true" class="route-line" />
               <div>
                 <span aria-hidden="true" class="route-dot route-dot--end" />
                 <small>Drop-off</small>
-                <strong>Charlotte, NC</strong>
-                <span>Elevator reserved · loading bay</span>
+                <strong>{{ moveBrief.destination }}</strong>
+                <span>{{ moveBrief.access }}</span>
               </div>
             </div>
 
@@ -269,7 +603,7 @@ function selectQuote(quoteId: string): void {
                 service date must remain unchanged during negotiation.
               </p>
             </details>
-          </section>
+          </details>
 
           <section id="negotiations" class="panel panel--calls card">
             <header class="panel__header">
@@ -411,14 +745,19 @@ function selectQuote(quoteId: string): void {
             </div>
           </section>
 
-          <section id="quotes" class="panel card">
-            <header class="panel__header">
+          <details id="quotes" class="panel panel--summary card">
+            <summary class="panel__header">
               <div>
                 <span class="panel__eyebrow">Normalized comparison</span>
-                <h2>Quotes</h2>
+                <h2>Current offers</h2>
               </div>
-              <StatusBadge :dot="false">Same scope · USD</StatusBadge>
-            </header>
+              <span class="panel-summary-status">
+                <StatusBadge :dot="false"
+                  >{{ quotes.length }} comparable</StatusBadge
+                >
+                <span aria-hidden="true">⌄</span>
+              </span>
+            </summary>
             <p class="panel__intro">
               Every quote uses the confirmed three-person crew and inventory.
               Select one to inspect the recommendation detail.
@@ -428,7 +767,7 @@ function selectQuote(quoteId: string): void {
               :selected-id="selectedQuoteId"
               @select="selectQuote"
             />
-          </section>
+          </details>
         </div>
 
         <aside class="workspace-secondary">
@@ -499,14 +838,23 @@ function selectQuote(quoteId: string): void {
 
             <button
               class="button button--blue recommendation-card__action"
+              :disabled="decisionPending"
               type="button"
-              @click="decisionSaved = true"
+              @click="saveRecommendedDecision"
             >
-              {{ decisionSaved ? "Decision saved" : "Choose Pine & Co." }}
-              <span aria-hidden="true">{{ decisionSaved ? "✓" : "→" }}</span>
+              {{
+                decisionPending
+                  ? "Saving decision…"
+                  : decisionSaved
+                    ? "Decision saved"
+                    : `Choose ${recommendedQuote?.company ?? "recommended offer"}`
+              }}
+              <span aria-hidden="true">{{
+                decisionPending ? "" : decisionSaved ? "✓" : "→"
+              }}</span>
             </button>
             <p class="recommendation-card__fine-print">
-              Demo only. Relay never books without your confirmation.
+              Relay saves your choice. Booking remains under your control.
             </p>
           </section>
 
@@ -567,164 +915,14 @@ function selectQuote(quoteId: string): void {
         </aside>
       </div>
     </main>
-  </div>
+  </AppShell>
 </template>
 
 <style scoped>
-.workspace-shell {
-  background: var(--relay-page);
-  min-height: 100vh;
-  padding-left: 214px;
-  padding-top: 64px;
-}
-
-.workspace-header {
-  align-items: center;
-  background: rgb(255 255 255 / 96%);
-  border-bottom: 1px solid var(--relay-line);
-  display: grid;
-  grid-template-columns: 214px 1fr auto;
-  height: 64px;
-  left: 0;
-  padding: 0 22px;
-  position: fixed;
-  right: 0;
-  top: 0;
-  z-index: 50;
-}
-
-.workspace-header__brand {
-  width: fit-content;
-}
-
-.workspace-header__session {
-  align-items: center;
-  color: var(--relay-muted);
-  display: flex;
-  font-size: 0.74rem;
-  gap: 10px;
-}
-
-.workspace-header__divider {
-  background: var(--relay-line-strong);
-  height: 22px;
-  margin-right: 4px;
-  width: 1px;
-}
-
-.workspace-header__actions {
-  align-items: center;
-  display: flex;
-  gap: 14px;
-}
-
-.workspace-header__saved {
-  color: var(--relay-faint);
-  font-size: 0.66rem;
-}
-
-.avatar-button {
-  align-items: center;
-  background: var(--relay-ink);
-  border: 0;
-  border-radius: 9px;
-  color: #ffffff;
-  display: inline-flex;
-  font-size: 0.62rem;
-  font-weight: 590;
-  height: 31px;
-  justify-content: center;
-  width: 31px;
-}
-
-.workspace-rail {
-  background: #fbfbf9;
-  border-right: 1px solid var(--relay-line);
-  bottom: 0;
-  display: flex;
-  flex-direction: column;
-  left: 0;
-  padding: 28px 14px 18px;
-  position: fixed;
-  top: 64px;
-  width: 214px;
-  z-index: 30;
-}
-
-.workspace-rail nav {
-  display: grid;
-  gap: 3px;
-}
-
-.rail-link {
-  align-items: center;
-  border-radius: 9px;
-  color: var(--relay-muted);
-  display: grid;
-  font-size: 0.73rem;
-  gap: 9px;
-  grid-template-columns: 20px 1fr auto;
-  min-height: 38px;
-  padding: 0 10px;
-}
-
-.rail-link > span {
-  color: var(--relay-faint);
-  font-size: 0.57rem;
-  font-variant-numeric: tabular-nums;
-}
-
-.rail-link small {
-  background: var(--relay-blue-soft);
-  border-radius: 999px;
-  color: var(--relay-blue);
-  font-size: 0.56rem;
-  padding: 4px 6px;
-}
-
-.rail-link:hover,
-.rail-link--active {
-  background: var(--relay-surface-muted);
-  color: var(--relay-ink);
-}
-
-.rail-session {
-  border-top: 1px solid var(--relay-line);
-  display: grid;
-  gap: 4px;
-  margin-top: auto;
-  padding: 20px 10px;
-}
-
-.rail-session span,
-.rail-session p {
-  color: var(--relay-faint);
-  font-size: 0.6rem;
-}
-
-.rail-session strong {
-  font-size: 0.7rem;
-  font-weight: 590;
-}
-
-.rail-session p {
-  margin: 0;
-}
-
-.rail-back {
-  align-items: center;
-  border-top: 1px solid var(--relay-line);
-  color: var(--relay-muted);
-  display: flex;
-  font-size: 0.69rem;
-  gap: 8px;
-  padding: 18px 10px 2px;
-}
-
 .workspace-main {
   margin: 0 auto;
-  max-width: 1450px;
-  padding: 38px 34px 90px;
+  max-width: var(--relay-width-wide);
+  padding: var(--relay-space-10) var(--relay-page-gutter) var(--relay-space-24);
 }
 
 .session-heading {
@@ -737,13 +935,13 @@ function selectQuote(quoteId: string): void {
 .session-heading__crumbs {
   color: var(--relay-faint);
   display: flex;
-  font-size: 0.65rem;
+  font-size: var(--relay-text-meta);
   gap: 7px;
   margin-bottom: 12px;
 }
 
 .session-heading h1 {
-  font-size: clamp(1.75rem, 3vw, 2.45rem);
+  font-size: var(--relay-text-page-title);
   font-weight: 530;
   letter-spacing: -0.05em;
   margin-bottom: 7px;
@@ -751,7 +949,7 @@ function selectQuote(quoteId: string): void {
 
 .session-heading p {
   color: var(--relay-muted);
-  font-size: 0.76rem;
+  font-size: var(--relay-text-control);
   margin-bottom: 0;
 }
 
@@ -764,8 +962,14 @@ function selectQuote(quoteId: string): void {
   min-height: 39px;
 }
 
-.mobile-section-nav {
-  display: none;
+.pause-icon {
+  fill: none;
+  height: 16px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.6;
+  width: 16px;
 }
 
 .stage-card {
@@ -787,7 +991,7 @@ function selectQuote(quoteId: string): void {
 .stage-card__topline > div > span,
 .stage-card__topline > strong {
   color: var(--relay-faint);
-  font-size: 0.64rem;
+  font-size: var(--relay-text-meta);
   font-weight: 500;
 }
 
@@ -828,7 +1032,7 @@ function selectQuote(quoteId: string): void {
   border-radius: 999px;
   color: var(--relay-faint);
   display: inline-flex;
-  font-size: 0.62rem;
+  font-size: var(--relay-text-meta);
   height: 29px;
   justify-content: center;
   position: relative;
@@ -863,19 +1067,19 @@ function selectQuote(quoteId: string): void {
 }
 
 .stage-track__item strong {
-  font-size: 0.68rem;
+  font-size: var(--relay-text-control);
   font-weight: 570;
 }
 
 .stage-track__item small {
   color: var(--relay-faint);
-  font-size: 0.58rem;
+  font-size: var(--relay-text-meta);
 }
 
 .metric-grid {
   display: grid;
   gap: 12px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   margin-bottom: 12px;
 }
 
@@ -888,7 +1092,8 @@ function selectQuote(quoteId: string): void {
 .metric-card > span,
 .metric-card small {
   color: var(--relay-faint);
-  font-size: 0.62rem;
+  font-size: var(--relay-text-meta);
+  line-height: var(--relay-leading-meta);
 }
 
 .metric-card strong {
@@ -912,6 +1117,7 @@ function selectQuote(quoteId: string): void {
 .workspace-secondary {
   display: grid;
   gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
 }
 
@@ -921,7 +1127,30 @@ function selectQuote(quoteId: string): void {
 }
 
 .panel {
+  min-width: 0;
+  overflow: hidden;
   scroll-margin-top: 78px;
+}
+.panel--summary > summary {
+  cursor: pointer;
+  list-style: none;
+}
+.panel--summary > summary::-webkit-details-marker {
+  display: none;
+}
+.panel-summary-status {
+  align-items: center;
+  display: flex;
+  gap: var(--relay-space-2);
+}
+.panel-summary-status > span:last-child {
+  color: var(--relay-faint);
+  display: inline-block;
+  font-size: var(--relay-text-meta);
+  transition: transform 160ms ease;
+}
+.panel--summary[open] .panel-summary-status > span:last-child {
+  transform: rotate(180deg);
 }
 
 .panel__header {
@@ -935,7 +1164,7 @@ function selectQuote(quoteId: string): void {
 .panel__eyebrow {
   color: var(--relay-faint);
   display: block;
-  font-size: 0.58rem;
+  font-size: var(--relay-text-meta);
   letter-spacing: 0.07em;
   margin-bottom: 5px;
   text-transform: uppercase;
@@ -944,7 +1173,7 @@ function selectQuote(quoteId: string): void {
 .panel__header h2,
 .recommendation-card h2,
 .activity-card h2 {
-  font-size: 0.95rem;
+  font-size: var(--relay-text-card-title);
   font-weight: 590;
   letter-spacing: -0.025em;
   margin: 0;
@@ -952,7 +1181,7 @@ function selectQuote(quoteId: string): void {
 
 .panel__meta {
   color: var(--relay-faint);
-  font-size: 0.62rem;
+  font-size: var(--relay-text-meta);
 }
 
 .brief-route {
@@ -971,11 +1200,11 @@ function selectQuote(quoteId: string): void {
 .brief-route small,
 .brief-route > div > span:last-child {
   color: var(--relay-faint);
-  font-size: 0.62rem;
+  font-size: var(--relay-text-meta);
 }
 
 .brief-route strong {
-  font-size: 0.82rem;
+  font-size: var(--relay-text-control);
   font-weight: 580;
 }
 
@@ -1024,12 +1253,12 @@ function selectQuote(quoteId: string): void {
 
 .brief-details dt {
   color: var(--relay-faint);
-  font-size: 0.6rem;
+  font-size: var(--relay-text-meta);
   margin-bottom: 5px;
 }
 
 .brief-details dd {
-  font-size: 0.72rem;
+  font-size: var(--relay-text-control);
   line-height: 1.5;
   margin: 0;
 }
@@ -1043,13 +1272,13 @@ function selectQuote(quoteId: string): void {
 .fee-breakdown summary {
   color: var(--relay-muted);
   cursor: pointer;
-  font-size: 0.68rem;
+  font-size: var(--relay-text-control);
   font-weight: 560;
 }
 
 .brief-notes p {
   color: var(--relay-muted);
-  font-size: 0.7rem;
+  font-size: var(--relay-text-meta);
   line-height: 1.65;
   margin: 12px 0 3px;
 }
@@ -1094,7 +1323,7 @@ function selectQuote(quoteId: string): void {
   border-radius: 10px;
   color: var(--relay-muted);
   display: inline-flex;
-  font-size: 0.59rem;
+  font-size: var(--relay-text-meta);
   font-weight: 600;
   height: 35px;
   justify-content: center;
@@ -1108,7 +1337,7 @@ function selectQuote(quoteId: string): void {
 }
 
 .call-row__name {
-  font-size: 0.69rem;
+  font-size: var(--relay-text-control);
   font-weight: 580;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1126,11 +1355,11 @@ function selectQuote(quoteId: string): void {
 .call-row__offer s,
 .call-row__offer small {
   color: var(--relay-faint);
-  font-size: 0.57rem;
+  font-size: var(--relay-text-meta);
 }
 
 .call-row__offer strong {
-  font-size: 0.76rem;
+  font-size: var(--relay-text-control);
   font-weight: 600;
 }
 
@@ -1149,11 +1378,11 @@ function selectQuote(quoteId: string): void {
 .call-progress span,
 .strategy-note > span {
   color: var(--relay-faint);
-  font-size: 0.58rem;
+  font-size: var(--relay-text-meta);
 }
 
 .call-detail__topline h3 {
-  font-size: 0.9rem;
+  font-size: var(--relay-text-card-title);
   font-weight: 590;
   margin: 5px 0 0;
 }
@@ -1169,7 +1398,7 @@ function selectQuote(quoteId: string): void {
 }
 
 .call-progress strong {
-  font-size: 0.62rem;
+  font-size: var(--relay-text-meta);
 }
 
 .progress-track,
@@ -1198,13 +1427,13 @@ function selectQuote(quoteId: string): void {
 }
 
 .strategy-note strong {
-  font-size: 0.7rem;
+  font-size: var(--relay-text-control);
   font-weight: 580;
 }
 
 .strategy-note p {
   color: var(--relay-muted);
-  font-size: 0.64rem;
+  font-size: var(--relay-text-meta);
   line-height: 1.55;
   margin: 0;
 }
@@ -1220,7 +1449,7 @@ function selectQuote(quoteId: string): void {
 }
 
 .transcript__heading h4 {
-  font-size: 0.7rem;
+  font-size: var(--relay-text-control);
   font-weight: 590;
   margin: 0;
 }
@@ -1229,7 +1458,7 @@ function selectQuote(quoteId: string): void {
   align-items: center;
   color: var(--relay-faint);
   display: inline-flex;
-  font-size: 0.58rem;
+  font-size: var(--relay-text-meta);
   gap: 5px;
 }
 
@@ -1258,18 +1487,18 @@ function selectQuote(quoteId: string): void {
 
 .transcript time {
   color: var(--relay-faint);
-  font-size: 0.55rem;
+  font-size: var(--relay-text-meta);
   padding-top: 2px;
 }
 
 .transcript strong {
-  font-size: 0.62rem;
+  font-size: var(--relay-text-meta);
   font-weight: 590;
 }
 
 .transcript p {
   color: var(--relay-muted);
-  font-size: 0.64rem;
+  font-size: var(--relay-text-meta);
   line-height: 1.55;
   margin: 4px 0 0;
 }
@@ -1291,7 +1520,7 @@ function selectQuote(quoteId: string): void {
 
 .evidence-drawer summary span {
   color: var(--relay-faint);
-  font-size: 0.58rem;
+  font-size: var(--relay-text-meta);
 }
 
 .evidence-drawer ul {
@@ -1314,7 +1543,7 @@ function selectQuote(quoteId: string): void {
   border-radius: 999px;
   color: var(--relay-green);
   display: inline-flex;
-  font-size: 0.55rem;
+  font-size: var(--relay-text-meta);
   height: 19px;
   justify-content: center;
   width: 19px;
@@ -1327,14 +1556,14 @@ function selectQuote(quoteId: string): void {
 }
 
 .evidence-drawer strong {
-  font-size: 0.65rem;
+  font-size: var(--relay-text-control);
   font-weight: 570;
 }
 
 .evidence-drawer p,
 .evidence-drawer small {
   color: var(--relay-faint);
-  font-size: 0.58rem;
+  font-size: var(--relay-text-meta);
 }
 
 .evidence-drawer p {
@@ -1344,7 +1573,7 @@ function selectQuote(quoteId: string): void {
 
 .panel__intro {
   color: var(--relay-muted);
-  font-size: 0.68rem;
+  font-size: var(--relay-text-meta);
   line-height: 1.55;
   margin: 18px 22px 10px;
 }
@@ -1367,7 +1596,7 @@ function selectQuote(quoteId: string): void {
   align-items: center;
   color: var(--relay-green);
   display: flex;
-  font-size: 0.62rem;
+  font-size: var(--relay-text-meta);
   font-weight: 580;
   gap: 7px;
   margin-bottom: 17px;
@@ -1385,14 +1614,14 @@ function selectQuote(quoteId: string): void {
 }
 
 .recommendation-card h2 {
-  font-size: 1.15rem;
+  font-size: var(--relay-text-section-title);
   line-height: 1.25;
   margin-bottom: 9px;
 }
 
 .recommendation-card > p {
   color: var(--relay-muted);
-  font-size: 0.66rem;
+  font-size: var(--relay-text-meta);
   line-height: 1.55;
 }
 
@@ -1414,7 +1643,7 @@ function selectQuote(quoteId: string): void {
 
 .recommendation-card__price > div > span {
   color: var(--relay-muted);
-  font-size: 0.58rem;
+  font-size: var(--relay-text-meta);
 }
 
 .recommendation-card__price strong {
@@ -1435,14 +1664,14 @@ function selectQuote(quoteId: string): void {
   align-items: center;
   color: var(--relay-muted);
   display: grid;
-  font-size: 0.64rem;
+  font-size: var(--relay-text-meta);
   gap: 8px;
   grid-template-columns: auto 1fr;
 }
 
 .recommendation-reasons li span {
   color: var(--relay-green);
-  font-size: 0.6rem;
+  font-size: var(--relay-text-meta);
 }
 
 .confidence-block {
@@ -1460,7 +1689,7 @@ function selectQuote(quoteId: string): void {
 
 .confidence-block span,
 .confidence-block strong {
-  font-size: 0.61rem;
+  font-size: var(--relay-text-meta);
 }
 
 .confidence-block span {
@@ -1482,17 +1711,17 @@ function selectQuote(quoteId: string): void {
 
 .reviewing-note span {
   color: var(--relay-blue);
-  font-size: 0.57rem;
+  font-size: var(--relay-text-meta);
   font-weight: 570;
 }
 
 .reviewing-note strong {
-  font-size: 0.68rem;
+  font-size: var(--relay-text-control);
 }
 
 .reviewing-note p {
   color: var(--relay-muted);
-  font-size: 0.6rem;
+  font-size: var(--relay-text-meta);
   line-height: 1.45;
   margin: 0;
 }
@@ -1503,7 +1732,7 @@ function selectQuote(quoteId: string): void {
 
 .recommendation-card .recommendation-card__fine-print {
   color: var(--relay-faint);
-  font-size: 0.56rem;
+  font-size: var(--relay-text-meta);
   margin: 9px 0 0;
   text-align: center;
 }
@@ -1520,12 +1749,12 @@ function selectQuote(quoteId: string): void {
 
 .selected-quote__header span {
   color: var(--relay-faint);
-  font-size: 0.57rem;
+  font-size: var(--relay-text-meta);
   text-transform: uppercase;
 }
 
 .selected-quote__header strong {
-  font-size: 0.76rem;
+  font-size: var(--relay-text-card-title);
   font-weight: 590;
 }
 
@@ -1542,7 +1771,7 @@ function selectQuote(quoteId: string): void {
 
 .selected-quote dt,
 .selected-quote dd {
-  font-size: 0.6rem;
+  font-size: var(--relay-text-meta);
 }
 
 .selected-quote dt {
@@ -1567,7 +1796,7 @@ function selectQuote(quoteId: string): void {
 
 .fee-row span,
 .fee-row strong {
-  font-size: 0.59rem;
+  font-size: var(--relay-text-meta);
 }
 
 .fee-row span {
@@ -1586,7 +1815,7 @@ function selectQuote(quoteId: string): void {
 
 .activity-card header span {
   color: var(--relay-faint);
-  font-size: 0.56rem;
+  font-size: var(--relay-text-meta);
 }
 
 .activity-card ol {
@@ -1606,7 +1835,7 @@ function selectQuote(quoteId: string): void {
 .activity-card time,
 .activity-card li span {
   color: var(--relay-faint);
-  font-size: 0.56rem;
+  font-size: var(--relay-text-meta);
 }
 
 .activity-card li div {
@@ -1615,11 +1844,11 @@ function selectQuote(quoteId: string): void {
 }
 
 .activity-card li strong {
-  font-size: 0.62rem;
+  font-size: var(--relay-text-control);
   font-weight: 570;
 }
 
-@media (max-width: 1180px) {
+@media (max-width: 1280px) {
   .workspace-content-grid {
     grid-template-columns: minmax(0, 1fr) 286px;
   }
@@ -1634,47 +1863,14 @@ function selectQuote(quoteId: string): void {
   }
 }
 
-@media (max-width: 980px) {
-  .workspace-shell {
-    padding-left: 0;
-  }
-
-  .workspace-header {
-    grid-template-columns: auto 1fr auto;
-  }
-
-  .workspace-header__session {
-    margin-left: 24px;
-  }
-
-  .workspace-rail {
-    display: none;
-  }
-
+@media (max-width: 1024px) {
   .workspace-main {
-    padding-left: 22px;
-    padding-right: 22px;
-  }
-
-  .mobile-section-nav {
-    display: flex;
-    gap: 6px;
-    margin: 0 0 12px;
-    overflow-x: auto;
-  }
-
-  .mobile-section-nav a {
-    background: var(--relay-surface);
-    border: 1px solid var(--relay-line);
-    border-radius: 9px;
-    color: var(--relay-muted);
-    flex: 0 0 auto;
-    font-size: 0.65rem;
-    padding: 9px 12px;
+    padding-left: var(--relay-page-gutter-tablet);
+    padding-right: var(--relay-page-gutter-tablet);
   }
 
   .workspace-content-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .workspace-secondary {
@@ -1687,19 +1883,10 @@ function selectQuote(quoteId: string): void {
   }
 }
 
-@media (max-width: 720px) {
-  .workspace-header {
-    grid-template-columns: 1fr auto;
-    padding: 0 16px;
-  }
-
-  .workspace-header__session,
-  .workspace-header__saved {
-    display: none;
-  }
-
+@media (max-width: 768px) {
   .workspace-main {
-    padding: 26px 14px 70px;
+    padding: var(--relay-space-8) var(--relay-page-gutter-mobile)
+      var(--relay-space-16);
   }
 
   .session-heading {
@@ -1737,7 +1924,8 @@ function selectQuote(quoteId: string): void {
   }
 
   .metric-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(160px, 1fr));
+    overflow-x: auto;
   }
 
   .brief-route {
@@ -1769,11 +1957,6 @@ function selectQuote(quoteId: string): void {
     gap: 12px;
   }
 
-  .panel__header > :deep(.status-badge),
-  .panel__meta {
-    display: none;
-  }
-
   .call-row {
     grid-template-columns: auto minmax(0, 1fr) auto;
   }
@@ -1783,7 +1966,7 @@ function selectQuote(quoteId: string): void {
   }
 
   .workspace-secondary {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .recommendation-card {
@@ -1791,11 +1974,7 @@ function selectQuote(quoteId: string): void {
   }
 }
 
-@media (max-width: 430px) {
-  .metric-grid {
-    grid-template-columns: 1fr;
-  }
-
+@media (max-width: 640px) {
   .call-row {
     grid-template-columns: minmax(0, 1fr) auto;
   }

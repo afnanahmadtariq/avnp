@@ -68,6 +68,16 @@ Acceptance criteria:
 - [x] Wire representative shared contracts into the web and API applications.
 - [x] Provide credential-free development behavior for external integrations.
 
+Frontend finalization:
+
+- [x] Map customer capabilities, lifecycle states, trust boundaries, and recovery paths.
+- [x] Map the required public, request, decision, profile, and settings interfaces.
+- [x] Replace the section-index demo sidebar with stable product navigation and request context.
+- [x] Implement the guided intake -> brief confirmation -> business approval -> live calls -> report flow.
+- [x] Add the dashboard, profile, settings, evidence, consent, and retention surfaces.
+- [x] Remove decorative ghost frames, unsupported categories, inert controls, and inconsistent glyphs.
+- [x] Verify the complete UI at desktop and compact breakpoints with no page-level horizontal scrolling.
+
 Acceptance criteria:
 
 - Each application builds independently and through Turbo.
@@ -106,6 +116,10 @@ Acceptance criteria:
 
 ## Phase 6 - Moving MVP vertical slice
 
+- [x] Add immutable specification versions, consent-aware negotiation runs, ordered run events, recommendations, decisions, and a transactional outbox to Prisma.
+- [x] Add API-facing Zod contracts for jobs, candidates, run snapshots/events/reports, decisions, profile, and settings.
+- [x] Restrict queue payloads to identifiers and small execution parameters rather than embedded persistence records.
+- [x] Add explicit Prisma push, deterministic seed, and opt-in reset commands without creating a migrations directory.
 - [ ] Build voice and document intake into one confirmed structured job specification.
 - [ ] Discover at least three moving-company counterparties.
 - [ ] Run at least three distinct negotiation styles in parallel or simulated parallel sessions.
