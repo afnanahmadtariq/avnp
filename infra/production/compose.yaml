@@ -1,0 +1,110 @@
+name: relay-production
+
+x-relay-runtime: &relay-runtime
+  image: ${RELAY_IMAGE:-relay-runtime:dev}
+  env_file:
+    - ${RELAY_ENV_FILE:-../../.env.prod}
+  init: true
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  read_only: true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m
+  stop_grace_period: 30s
+  networks:
+    - relay
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
+services:
+  api:
+    <<: *relay-runtime
+    command: ["node", "--enable-source-maps", "dist/main.js"]
+    working_dir: /opt/relay/api
+    environment:
+      NODE_ENV: production
+      API_HOST: 0.0.0.0
+      API_PORT: "4000"
+    expose:
+      - "4000"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          fetch('http://127.0.0.1:4000/api/v1/health').then((response)=>{
+          if(!response.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  worker:
+    <<: *relay-runtime
+    command: ["node", "--enable-source-maps", "dist/main.js"]
+    working_dir: /opt/relay/worker
+    environment:
+      NODE_ENV: production
+    healthcheck:
+      test: ["CMD", "node", "/opt/relay/healthchecks/worker.mjs"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  caddy:
+    image: caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    environment:
+      API_DOMAIN: ${API_DOMAIN:-api.zerotools.online}
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - relay
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "caddy",
+          "validate",
+          "--config",
+          "/etc/caddy/Caddyfile",
+          "--adapter",
+          "caddyfile",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    stop_grace_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+networks:
+  relay:
+    driver: bridge
+
+volumes:
+  caddy-data:
+  caddy-config:

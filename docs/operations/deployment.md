@@ -1,8 +1,10 @@
 # Deployment shape
 
-Status: Application shape implemented; managed deployment pending
+Status: Production delivery shape implemented; provisioning pending
 Owner: Engineering  
 Last reviewed: 2026-07-19
+
+The executable Vercel, Cloudflare, GHCR, and VM procedure is in the [production deployment runbook](production-deployment.md). This page records the environment-independent release policy.
 
 ## Environments
 

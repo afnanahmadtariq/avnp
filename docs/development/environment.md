@@ -6,6 +6,8 @@ Last reviewed: 2026-07-19
 
 Copy `.env.example` to the repository-root `.env` for local development. The root `pnpm dev`, `pnpm dev:web`, `pnpm dev:api`, and `pnpm dev:worker` commands load it before Turbo starts applications. Existing shell variables take precedence.
 
+For production, copy `.env.prod.example` to the ignored `.env.prod`, then supply it to the VM only. Vercel receives only the three browser build variables listed in the production deployment runbook.
+
 Fixture mode needs no paid provider credentials. `DATABASE_URL` is the only value required for its persisted product routes. Live mode validates the selected provider values at startup and fails with the missing variable names.
 
 ## Runtime and network
@@ -83,7 +85,7 @@ Twilio credentials are not used to place calls; ElevenLabs' native Twilio endpoi
 | Variable         | Consumer    | Required when                                 | Purpose                                            | Secret |
 | ---------------- | ----------- | --------------------------------------------- | -------------------------------------------------- | ------ |
 | `OPENAI_API_KEY` | API, worker | `AI_PROVIDER=openai` or `OCR_PROVIDER=openai` | Server key for Responses API structured extraction | Yes    |
-| `OPENAI_MODEL`   | API, worker | OpenAI selected                               | Model identifier; defaults to `gpt-5.6-luna`       | No     |
+| `OPENAI_MODEL`   | API, worker | OpenAI selected                               | Required live model pin; use `gpt-5.6-luna`        | No     |
 
 The same OpenAI Responses adapter handles text, image, document, interview, and call transcript extraction with strict JSON Schema output.
 
@@ -93,7 +95,7 @@ The same OpenAI Responses adapter handles text, image, document, interview, and 
 | --------------------------- | ----------- | --------------------------- | ------------------------------------------------------------ | ------ |
 | `SUPABASE_URL`              | API, worker | `STORAGE_PROVIDER=supabase` | Supabase project endpoint                                    | No     |
 | `SUPABASE_SERVICE_ROLE_KEY` | API, worker | `STORAGE_PROVIDER=supabase` | Privileged server-only access to the private evidence bucket | Yes    |
-| `SUPABASE_STORAGE_BUCKET`   | API, worker | `STORAGE_PROVIDER=supabase` | Private bucket name; defaults to `relay-evidence`            | No     |
+| `SUPABASE_STORAGE_BUCKET`   | API, worker | `STORAGE_PROVIDER=supabase` | Required live private bucket name; use `relay-evidence`      | No     |
 
 The service-role key bypasses ordinary browser authorization and must never enter a client bundle. Keep the bucket private and expose evidence only through authorized, short-lived signed access.
 

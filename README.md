@@ -24,7 +24,10 @@ Activate Node.js `24.18.0` from `.nvmrc` or `.node-version`, then run:
 corepack enable
 pnpm install
 cp .env.example .env
+docker compose -f infra/compose.yaml up -d
 pnpm db:generate
+pnpm db:push
+pnpm db:seed
 pnpm dev
 ```
 
@@ -33,13 +36,7 @@ Local endpoints:
 - Relay web experience: `http://localhost:3000`
 - API health: `http://localhost:4000/api/v1/health`
 
-PostgreSQL and Redis are optional for the current credential-free frontend and tests. Start them when persistence or queues are needed:
-
-```bash
-docker compose -f infra/compose.yaml up -d
-```
-
-The PostgreSQL container is pinned to 18.4 and uses the PostgreSQL 18 volume layout. Local database data is disposable, and this baseline starts from a clean PostgreSQL 18 volume.
+PostgreSQL is required for the complete persisted product flow. Redis is used by the durable live queue; fixture mode can use the in-memory queue. The local Compose stack starts both. PostgreSQL is pinned to 18.4 and uses the PostgreSQL 18 volume layout. Local database data is disposable; `pnpm db:reset` is destructive and must only target that disposable local database.
 
 ## Repository map
 
@@ -60,7 +57,7 @@ packages/
   typescript-config/    Shared strict compiler configuration
 docs/                   Product, architecture, delivery, and operations details
 assets/brand/           Production Relay identity and archived explorations
-infra/                  Local PostgreSQL and Redis definitions
+infra/                  Local services and production container definitions
 ```
 
 Applications may depend on packages; packages never depend on applications. Provider SDKs stay behind server-only integration boundaries, while the Nuxt application consumes browser-safe contracts and the Relay UI foundation.
@@ -90,6 +87,7 @@ Applications may depend on packages; packages never depend on applications. Prov
 - [Repository boundaries](docs/architecture/repository-layout.md)
 - [Relay brand system](docs/design/brand.md)
 - [Environment catalog](docs/development/environment.md)
+- [Production deployment](docs/operations/production-deployment.md)
 - [Execution task list](docs/project/task-list.md)
 - [Preserved source material](docs/references/README.md)
 

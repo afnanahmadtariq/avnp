@@ -36,7 +36,7 @@ ElevenLabs is the single agent and telephony lifecycle owner. Relay starts a nat
 
 Twilio account credentials are not needed for call placement. When both optional Twilio server credentials are configured, Relay can map the ElevenLabs conversation to its Twilio call SID and end an already active call during cancellation. This does not create a second transport path.
 
-The public callback is exactly `/api/v1/webhooks/elevenlabs`. It accepts signed `post_call_transcription`, `post_call_audio`, and `call_initiation_failure` events.
+The public callback is exactly `/api/v1/webhooks/elevenlabs`. Production configures signed `post_call_transcription` and `call_initiation_failure` events. The parser remains defensive around legacy audio payloads, but Relay does not enable `post_call_audio`; it retrieves consented audio through the authenticated conversation API instead.
 
 ## Data-schema policy
 

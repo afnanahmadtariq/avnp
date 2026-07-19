@@ -1,0 +1,161 @@
+name: Deploy VM
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows:
+      - Quality
+    branches:
+      - main
+    types:
+      - completed
+
+concurrency:
+  group: production-vm
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/relay-runtime
+  RELEASE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+jobs:
+  image:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout verified release
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@65b78e6e13532edd9afa3aa52ac7964289d1a9c1 # v4.0.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create image metadata
+        id: metadata
+        uses: docker/metadata-action@9ec57ed1fcdbf14dcef7dfbe97b2010124a938b7 # v6.0.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          labels: |
+            org.opencontainers.image.revision=${{ env.RELEASE_SHA }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          tags: |
+            type=raw,value=${{ env.RELEASE_SHA }}
+            type=raw,value=main
+
+      - name: Build and publish runtime image
+        uses: docker/build-push-action@f2a1d5e99d037542a71f64918e516c093c6f3fc4 # v7.2.0
+        with:
+          build-args: |
+            APP_VERSION=${{ env.RELEASE_SHA }}
+            VCS_REF=${{ env.RELEASE_SHA }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          context: .
+          file: infra/production/Dockerfile
+          labels: ${{ steps.metadata.outputs.labels }}
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.metadata.outputs.tags }}
+
+  deploy:
+    needs: image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout deployment definition
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+
+      - name: Configure SSH trust
+        env:
+          VM_SSH_KNOWN_HOSTS: ${{ secrets.VM_SSH_KNOWN_HOSTS }}
+          VM_SSH_PRIVATE_KEY: ${{ secrets.VM_SSH_PRIVATE_KEY }}
+        run: |
+          install -d -m 700 "$RUNNER_TEMP/relay-ssh"
+          printf '%s\n' "$VM_SSH_PRIVATE_KEY" > "$RUNNER_TEMP/relay-ssh/key"
+          printf '%s\n' "$VM_SSH_KNOWN_HOSTS" > "$RUNNER_TEMP/relay-ssh/known_hosts"
+          chmod 600 "$RUNNER_TEMP/relay-ssh/key" "$RUNNER_TEMP/relay-ssh/known_hosts"
+
+      - name: Upload production definition
+        env:
+          VM_DEPLOY_PATH: ${{ secrets.VM_DEPLOY_PATH }}
+          VM_HOST: ${{ secrets.VM_HOST }}
+          VM_PORT: ${{ secrets.VM_PORT }}
+          VM_USER: ${{ secrets.VM_USER }}
+        run: |
+          ssh -i "$RUNNER_TEMP/relay-ssh/key" \
+            -o BatchMode=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/relay-ssh/known_hosts" \
+            -p "$VM_PORT" \
+            "$VM_USER@$VM_HOST" \
+            "install -d -m 750 '$VM_DEPLOY_PATH'"
+          scp -i "$RUNNER_TEMP/relay-ssh/key" \
+            -o BatchMode=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/relay-ssh/known_hosts" \
+            -P "$VM_PORT" \
+            infra/production/compose.yaml \
+            infra/production/Caddyfile \
+            "$VM_USER@$VM_HOST:$VM_DEPLOY_PATH/"
+
+      - name: Activate verified release
+        env:
+          IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.RELEASE_SHA }}
+          VM_DEPLOY_PATH: ${{ secrets.VM_DEPLOY_PATH }}
+          VM_HOST: ${{ secrets.VM_HOST }}
+          VM_PORT: ${{ secrets.VM_PORT }}
+          VM_USER: ${{ secrets.VM_USER }}
+        run: |
+          ssh -i "$RUNNER_TEMP/relay-ssh/key" \
+            -o BatchMode=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/relay-ssh/known_hosts" \
+            -p "$VM_PORT" \
+            "$VM_USER@$VM_HOST" \
+            "RELAY_IMAGE='$IMAGE_REF' VM_DEPLOY_PATH='$VM_DEPLOY_PATH' sh -s" <<'REMOTE'
+          set -eu
+          cd "$VM_DEPLOY_PATH"
+          test -s .env.prod
+
+          printf '%s\n' \
+            "RELAY_IMAGE=$RELAY_IMAGE" \
+            'RELAY_ENV_FILE=.env.prod' \
+            > .release.env.next
+
+          docker compose --env-file .release.env.next -f compose.yaml config --quiet
+          docker compose --env-file .release.env.next -f compose.yaml pull
+
+          if docker compose \
+            --env-file .release.env.next \
+            -f compose.yaml \
+            up -d --remove-orphans --wait --wait-timeout 180; then
+            mv .release.env.next .release.env
+            docker compose --env-file .release.env -f compose.yaml ps
+            exit 0
+          fi
+
+          rm -f .release.env.next
+          if test -s .release.env; then
+            docker compose \
+              --env-file .release.env \
+              -f compose.yaml \
+              up -d --remove-orphans --wait --wait-timeout 180
+          fi
+          exit 1
+          REMOTE

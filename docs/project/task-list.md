@@ -144,8 +144,9 @@ Acceptance criteria:
 - [x] Add live PostgreSQL, Redis/BullMQ, Supabase private-storage, Google Places, ElevenLabs/Twilio, and OpenAI provider compositions with startup validation.
 - [x] Add pause/resume/cancel run controls and optional provider-side active Twilio call termination.
 - [x] Add an ownership-checked API route that returns short-lived signed URLs for private Supabase evidence.
+- [x] Add Vercel web configuration, pinned API/worker Docker runtime, Caddy HTTPS proxy, GHCR-to-VM deployment workflow, production environment template, rollback, and deployment runbook.
 - [ ] Add an operator-visible human-handoff workflow.
-- [ ] Provision preview/production services, observability/alerts, backup/restore checks, and deployment pipelines.
+- [ ] Provision preview/production services, observability/alerts, and backup/restore checks, then activate the checked-in deployment pipelines.
 - [ ] Run real-credential smoke tests for Clerk, Google, ElevenLabs/Twilio, OpenAI, Supabase, Redis, the public webhook, and one consented end-to-end live run.
 - [ ] Complete jurisdiction-specific legal/compliance approval before live public calling.
 - [ ] Add multilingual calls, SMS/email follow-up, booking, history, and additional vertical configurations.
@@ -158,4 +159,4 @@ Acceptance criteria:
 
 ## Current execution slice
 
-The application now covers the persisted intake -> confirmation -> discovery -> approved calls -> structured outcomes -> truthful follow-up -> ranking -> private evidence -> timeline/report flow in fixture and implemented live-provider compositions. Remaining launch and stretch work is real-credential/public-webhook testing, managed deployment and observability, operator handoff, backup/restore evidence, legal approval, and post-MVP channels or verticals.
+The application now covers the persisted intake -> confirmation -> discovery -> approved calls -> structured outcomes -> truthful follow-up -> ranking -> private evidence -> timeline/report flow in fixture and implemented live-provider compositions. The Vercel and VM delivery pipeline is checked in. Remaining launch and stretch work is provisioning and credential entry, service-by-service/public-webhook testing, deployment activation and observability, operator handoff, backup/restore evidence, legal approval, and post-MVP channels or verticals.

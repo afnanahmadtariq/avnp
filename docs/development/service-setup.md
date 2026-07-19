@@ -118,6 +118,8 @@ Production schema changes use a reviewed `db:push` with a verified backup and re
 
 Relay intentionally uses `CLERK_SECRET_KEY`, even though some Clerk Nuxt examples use `NUXT_CLERK_SECRET_KEY`. The current code reads the Relay name above. See Clerk's [Nuxt quickstart](https://clerk.com/docs/quickstarts/nuxt/) and [key reference](https://clerk.com/docs/guides/development/clerk-environment-variables).
 
+Set both `AUTH_PROVIDER=clerk` and `NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY` before the Nuxt/Vercel build starts. Clerk module inclusion is decided at build time; changing those variables requires a fresh deployment.
+
 ### Google Places API (New)
 
 1. Create a Google Cloud project with billing and enable **Places API (New)**.
@@ -131,11 +133,11 @@ Relay uses Text Search (New) with a field mask and keeps only candidates with a 
 
 Relay has one call-lifecycle design: ElevenLabs owns the agent and native Twilio outbound-call initiation. There is no second Relay-owned Twilio transport.
 
-1. Create the negotiation agent and configure disclosure, allowed behavior, dynamic variables/overrides, timeouts, and recording policy.
+1. Create the negotiation agent from the checked-in [agent prompt and dynamic-variable contract](elevenlabs-agent.md), including disclosure, truthful-leverage rules, timeouts, and recording policy.
 2. Create a dedicated interview agent when the intake behavior differs. Set `ELEVENLABS_INTERVIEW_AGENT_ID`; otherwise Relay uses `ELEVENLABS_AGENT_ID` for both experiences.
 3. Provision a voice-capable Twilio number, import it into ElevenLabs, assign it to the negotiation agent, and record the resulting ElevenLabs phone-number ID.
 4. Create an ElevenLabs API key for the server/worker.
-5. Configure signed `post_call_transcription`, `post_call_audio`, and `call_initiation_failure` events to:
+5. Configure only signed `post_call_transcription` and `call_initiation_failure` events to:
 
    ```text
    https://<api-host>/api/v1/webhooks/elevenlabs
@@ -153,13 +155,13 @@ Twilio credentials are not required by Relay to place a native ElevenLabs call. 
 1. Create a project-scoped API key, billing budget, and usage/rate limits.
 2. Store the key only as `OPENAI_API_KEY` in API/worker secrets.
 3. Set both `AI_PROVIDER=openai` and `OCR_PROVIDER=openai`.
-4. Keep the pinned application model in `OPENAI_MODEL`; the current default is `gpt-5.6-luna`.
+4. Keep the production application model pinned explicitly as `OPENAI_MODEL=gpt-5.6-luna`.
 
-Relay sends document/image/text and transcript inputs to the Responses API with `store: false`, strict JSON Schema output, and application-side contract validation. GPT-5.6 Luna supports image input, Responses, and Structured Outputs and is positioned for cost-sensitive workloads in the official [model reference](https://developers.openai.com/api/docs/models/gpt-5.6-luna).
+Set `OPENAI_MODEL=gpt-5.6-luna` explicitly in live configuration. Relay sends document/image/text and transcript inputs to the Responses API with `store: false`, strict JSON Schema output, and application-side contract validation. GPT-5.6 Luna supports image input, Responses, and Structured Outputs and is positioned for cost-sensitive workloads in the official [model reference](https://developers.openai.com/api/docs/models/gpt-5.6-luna).
 
 ### Supabase private storage
 
-1. Create a Supabase project and a bucket matching `SUPABASE_STORAGE_BUCKET` (default `relay-evidence`).
+1. Create a Supabase project and a private bucket, then set `SUPABASE_STORAGE_BUCKET=relay-evidence` explicitly in live configuration.
 2. Keep the bucket private; never enable public object access.
 3. Configure file-size/content-type controls, retention/deletion policy, and environment separation.
 4. Store the project URL and service-role key only in the API/worker secret store.
