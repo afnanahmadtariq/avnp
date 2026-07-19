@@ -27,7 +27,9 @@
     "format:check": "prettier --check .",
     "lint": "turbo run lint",
     "test": "turbo run test",
-    "typecheck": "turbo run typecheck"
+    "typecheck": "turbo run typecheck",
+    "video:dev": "corepack pnpm --filter @relay/video dev",
+    "video:render": "corepack pnpm --filter @relay/video render"
   },
   "devDependencies": {
     "prettier": "3.9.5",

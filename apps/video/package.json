@@ -1,0 +1,37 @@
+{
+  "name": "@relay/video",
+  "version": "0.0.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "scripts": {
+    "build": "remotion bundle src/index.ts --out-dir=dist/bundle --public-dir=public",
+    "clean": "rimraf dist",
+    "dev": "remotion studio src/index.ts",
+    "render": "pnpm render:mp4 && pnpm render:webm && pnpm render:poster",
+    "render:mp4": "remotion render src/index.ts RelayDemo dist/relay-demo.mp4 --codec=h264 --audio-codec=aac --crf=16 --pixel-format=yuv420p --color-space=bt709 --image-format=png --concurrency=50% --public-dir=public",
+    "render:poster": "remotion still src/index.ts RelayDemo dist/relay-demo-poster.png --frame=1480 --image-format=png --public-dir=public",
+    "render:webm": "remotion render src/index.ts RelayDemo dist/relay-demo.webm --codec=vp9 --audio-codec=opus --crf=20 --image-format=png --concurrency=50% --public-dir=public",
+    "test": "tsc --noEmit",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@remotion/media": "4.0.492",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "remotion": "4.0.492",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@remotion/cli": "4.0.492",
+    "@relay/typescript-config": "workspace:*",
+    "@types/node": "24.13.3",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "rimraf": "6.1.3",
+    "typescript": "6.0.3"
+  },
+  "engines": {
+    "node": "24.x"
+  }
+}

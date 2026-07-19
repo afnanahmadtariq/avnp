@@ -1,0 +1,31 @@
+1
+00:00:00,400 --> 00:00:04,900
+Getting a moving quote is easy. Knowing whether it is complete is not.
+
+2
+00:00:05,000 --> 00:00:09,700
+Meet Relay, your AI purchasing agent.
+
+3
+00:00:10,000 --> 00:00:18,900
+Tell Relay what you need once. One conversation becomes one confirmed brief.
+
+4
+00:00:19,000 --> 00:00:30,900
+Then Relay works the phones. Every business gets the same facts.
+
+5
+00:00:31,000 --> 00:00:41,800
+Every offer becomes a like-for-like comparison. Everything has a place.
+
+6
+00:00:42,000 --> 00:00:50,900
+Pine & Co. drops from $2,210 to $1,840—with seven evidence points attached.
+
+7
+00:00:51,000 --> 00:00:55,800
+See what changed, why it changed, and where every claim came from.
+
+8
+00:00:55,900 --> 00:01:00,000
+One brief in. Better offers out. Every recommendation backed by evidence.

@@ -4,6 +4,10 @@ Relay is an AI purchasing agent that gathers comparable phone quotes, negotiates
 
 The first product experience focuses on moving services: a customer confirms one complete job brief, Relay contacts multiple movers with the same facts, normalizes every fee, and explains the strongest deal without inventing leverage.
 
+[![Watch the 60-second Relay product demo](assets/demo/relay-demo-poster.png)](assets/demo/relay-demo.mp4)
+
+[Watch the 60-second product demo](assets/demo/relay-demo.mp4)
+
 ## Current foundation
 
 Relay is a private pnpm and Turborepo monorepo. The frontend is built with Nuxt and Vue; the API and background worker use NestJS. Internal workspaces use the final `@relay/*` scope.
@@ -45,6 +49,7 @@ apps/
   web/                 Nuxt customer experience and product workspace
   api/                 NestJS HTTP, webhook, validation, and enqueueing boundary
   worker/              Long-running call and quote orchestration process
+  video/               Editable Relay product film and rendering workflow
 packages/
   contracts/           Shared schemas, DTOs, events, and job payloads
   domain/              Provider-independent quote and negotiation policy
@@ -57,6 +62,7 @@ packages/
   typescript-config/    Shared strict compiler configuration
 docs/                   Product, architecture, delivery, and operations details
 assets/brand/           Production Relay identity and archived explorations
+assets/demo/            Published product demo and poster assets
 infra/                  Local services and production container definitions
 ```
 
@@ -69,6 +75,8 @@ Applications may depend on packages; packages never depend on applications. Prov
 | `pnpm dev:web`      | Run the Nuxt frontend.                                   |
 | `pnpm dev:api`      | Run the API locally.                                     |
 | `pnpm dev:worker`   | Run the background worker.                               |
+| `pnpm video:dev`    | Open the editable Relay video composition.               |
+| `pnpm video:render` | Render the MP4, WebM, and poster assets.                 |
 | `pnpm build`        | Build every application and package in dependency order. |
 | `pnpm lint`         | Run repository lint checks.                              |
 | `pnpm typecheck`    | Run strict TypeScript checks.                            |
@@ -86,6 +94,7 @@ Applications may depend on packages; packages never depend on applications. Prov
 - [Architecture overview](docs/architecture/overview.md)
 - [Repository boundaries](docs/architecture/repository-layout.md)
 - [Relay brand system](docs/design/brand.md)
+- [Relay demo video package](apps/video/README.md)
 - [Environment catalog](docs/development/environment.md)
 - [Production deployment](docs/operations/production-deployment.md)
 - [Execution task list](docs/project/task-list.md)

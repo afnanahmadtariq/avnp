@@ -3,6 +3,7 @@ packages:
   - "packages/*"
 
 autoInstallPeers: true
+enableGlobalVirtualStore: false
 engineStrict: true
 preferWorkspacePackages: true
 strictPeerDependencies: true
@@ -32,3 +33,27 @@ minimumReleaseAgeExclude:
   - "@nuxt/vite-builder@4.5.0"
   - happy-dom@20.11.0
   - nuxt@4.5.0
+  - "@remotion/bundler@4.0.492"
+  - "@remotion/canvas-capture@4.0.492"
+  - "@remotion/cli@4.0.492"
+  - "@remotion/compositor-darwin-arm64@4.0.492"
+  - "@remotion/compositor-darwin-x64@4.0.492"
+  - "@remotion/compositor-linux-arm64-gnu@4.0.492"
+  - "@remotion/compositor-linux-arm64-musl@4.0.492"
+  - "@remotion/compositor-linux-x64-gnu@4.0.492"
+  - "@remotion/compositor-linux-x64-musl@4.0.492"
+  - "@remotion/compositor-win32-x64-msvc@4.0.492"
+  - "@remotion/licensing@4.0.492"
+  - "@remotion/media-parser@4.0.492"
+  - "@remotion/media-utils@4.0.492"
+  - "@remotion/media@4.0.492"
+  - "@remotion/player@4.0.492"
+  - "@remotion/renderer@4.0.492"
+  - "@remotion/streaming@4.0.492"
+  - "@remotion/studio-server@4.0.492"
+  - "@remotion/studio-shared@4.0.492"
+  - "@remotion/studio@4.0.492"
+  - "@remotion/timeline-utils@4.0.492"
+  - "@remotion/web-renderer@4.0.492"
+  - "@remotion/zod-types@4.0.492"
+  - remotion@4.0.492
