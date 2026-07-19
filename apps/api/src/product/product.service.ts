@@ -1379,11 +1379,13 @@ export class ProductService implements OnApplicationBootstrap {
       }),
       recommendation: {
         businessName: bestQuote?.business.name ?? "No verified business",
-        confidence: Math.min(1, (bestRanking?.totalScore ?? 0) / 100),
+        confidence: Number(
+          Math.min(1, (bestRanking?.totalScore ?? 0) / 100).toFixed(4),
+        ),
         explanation: recommendation.explanation,
         quoteId: bestQuote?.id ?? "",
         rationale: bestRanking
-          ? `Ranked first with a ${bestRanking.totalScore} evidence-weighted score and attached call evidence.`
+          ? `Ranked first after earning an evidence-weighted score of ${bestRanking.totalScore}, supported by attached call evidence.`
           : "No eligible quote is available.",
         savingsCents: recommendation.savingsAmountCents ?? 0,
         totalCents: bestQuote?.totalAmountCents ?? 0,

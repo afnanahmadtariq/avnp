@@ -72,6 +72,32 @@ const specification = {
   vertical: "moving",
 };
 
+function quoteLineItems(totalAmountCents, recommended = false) {
+  const materials = recommended ? 18000 : 12000;
+  const transportation = recommended ? 0 : 6000;
+
+  return [
+    {
+      category: "labor",
+      code: "labor",
+      label: "Labor",
+      totalAmountCents: totalAmountCents - materials - transportation,
+    },
+    {
+      category: "materials",
+      code: "materials",
+      label: "Materials",
+      totalAmountCents: materials,
+    },
+    {
+      category: "transportation",
+      code: "transportation",
+      label: "Fuel and mileage",
+      totalAmountCents: transportation,
+    },
+  ];
+}
+
 async function seed() {
   await prisma.$transaction(async (tx) => {
     await tx.user.upsert({
@@ -377,49 +403,34 @@ async function seed() {
       },
     });
 
-    await tx.quoteItem.upsert({
-      where: { id: "demo-quote-item-transport" },
-      update: {
-        includedInTotal: true,
-        label: "Moving service",
-        required: true,
-        totalAmountCents: 174000,
-      },
-      create: {
-        category: "transportation",
-        disclosed: true,
-        feeCode: "moving_service",
-        id: "demo-quote-item-transport",
-        includedInTotal: true,
-        label: "Moving service",
-        lineNumber: 1,
-        quoteId: ids.quote,
-        required: true,
-        totalAmountCents: 174000,
-      },
-    });
-
-    await tx.quoteItem.upsert({
-      where: { id: "demo-quote-item-materials" },
-      update: {
-        includedInTotal: true,
-        label: "Packing materials",
-        required: false,
-        totalAmountCents: 10000,
-      },
-      create: {
-        category: "materials",
-        disclosed: true,
-        feeCode: "packing_materials",
-        id: "demo-quote-item-materials",
-        includedInTotal: true,
-        label: "Packing materials",
-        lineNumber: 2,
-        quoteId: ids.quote,
-        required: false,
-        totalAmountCents: 10000,
-      },
-    });
+    for (const [index, item] of quoteLineItems(184000, true).entries()) {
+      await tx.quoteItem.upsert({
+        where: { id: `${ids.quote}-item-${item.code}` },
+        update: {
+          category: item.category,
+          disclosed: true,
+          feeCode: item.code,
+          includedInTotal: true,
+          label: item.label,
+          lineNumber: index + 1,
+          quoteId: ids.quote,
+          required: true,
+          totalAmountCents: item.totalAmountCents,
+        },
+        create: {
+          category: item.category,
+          disclosed: true,
+          feeCode: item.code,
+          id: `${ids.quote}-item-${item.code}`,
+          includedInTotal: true,
+          label: item.label,
+          lineNumber: index + 1,
+          quoteId: ids.quote,
+          required: true,
+          totalAmountCents: item.totalAmountCents,
+        },
+      });
+    }
 
     const comparisonFixtures = [
       {
@@ -606,26 +617,36 @@ async function seed() {
         },
       });
 
-      await tx.quoteItem.upsert({
-        where: { id: `${fixture.quoteId}-item-service` },
-        update: {
-          includedInTotal: true,
-          required: true,
-          totalAmountCents: fixture.totalAmountCents,
-        },
-        create: {
-          category: "transportation",
-          disclosed: true,
-          feeCode: "moving_service",
-          id: `${fixture.quoteId}-item-service`,
-          includedInTotal: true,
-          label: "Moving service",
-          lineNumber: 1,
-          quoteId: fixture.quoteId,
-          required: true,
-          totalAmountCents: fixture.totalAmountCents,
-        },
-      });
+      for (const [index, item] of quoteLineItems(
+        fixture.totalAmountCents,
+      ).entries()) {
+        await tx.quoteItem.upsert({
+          where: { id: `${fixture.quoteId}-item-${item.code}` },
+          update: {
+            category: item.category,
+            disclosed: true,
+            feeCode: item.code,
+            includedInTotal: true,
+            label: item.label,
+            lineNumber: index + 1,
+            quoteId: fixture.quoteId,
+            required: true,
+            totalAmountCents: item.totalAmountCents,
+          },
+          create: {
+            category: item.category,
+            disclosed: true,
+            feeCode: item.code,
+            id: `${fixture.quoteId}-item-${item.code}`,
+            includedInTotal: true,
+            label: item.label,
+            lineNumber: index + 1,
+            quoteId: fixture.quoteId,
+            required: true,
+            totalAmountCents: item.totalAmountCents,
+          },
+        });
+      }
 
       if (fixture.quoteId === ids.quoteAtlas) {
         await tx.quoteItem.upsert({
@@ -642,7 +663,7 @@ async function seed() {
             id: `${fixture.quoteId}-item-unknown-access`,
             includedInTotal: false,
             label: "Possible access fee",
-            lineNumber: 2,
+            lineNumber: 4,
             quoteId: fixture.quoteId,
             required: false,
             totalAmountCents: null,
