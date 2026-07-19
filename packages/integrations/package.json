@@ -18,6 +18,7 @@
     "build": "tsc -p tsconfig.build.json",
     "lint": "eslint . --max-warnings 0",
     "test": "tsc -p tsconfig.build.json && node --test dist/providers.test.js",
+    "test:live": "tsc -p tsconfig.build.json && node --env-file-if-exists=../../.env.prod --test --test-concurrency=1 dist/live-providers.test.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

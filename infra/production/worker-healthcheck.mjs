@@ -46,9 +46,7 @@ const password = decodeCredential(redisUrl.password);
 const commands = [];
 
 if (password) {
-  commands.push(
-    username ? ["AUTH", username, password] : ["AUTH", password],
-  );
+  commands.push(username ? ["AUTH", username, password] : ["AUTH", password]);
 }
 commands.push(["PING"]);
 
