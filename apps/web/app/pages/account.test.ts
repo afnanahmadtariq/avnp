@@ -107,10 +107,18 @@ describe("account pages", () => {
       "Manage profile photo and sign-in details",
     );
     expect(wrapper.text()).not.toContain("automated assistant calling");
+    expect(
+      wrapper.get<HTMLButtonElement>('button[form="profile-form"]').element
+        .disabled,
+    ).toBe(true);
 
     await wrapper
       .get<HTMLInputElement>('input[autocomplete="name"]')
       .setValue("Relay Customer");
+    expect(
+      wrapper.get<HTMLButtonElement>('button[form="profile-form"]').element
+        .disabled,
+    ).toBe(false);
     await wrapper.get("#profile-form").trigger("submit");
     await flushPromises();
 
@@ -146,19 +154,23 @@ describe("account pages", () => {
     expect(phoneInput.element.value).toBe("");
     expect(phoneInput.attributes("required")).toBeUndefined();
 
+    await wrapper
+      .get<HTMLInputElement>('input[autocomplete="address-level2"]')
+      .setValue("Raleigh, NC");
     await wrapper.get("#profile-form").trigger("submit");
     await flushPromises();
 
     expect(api.updateProfile).toHaveBeenCalledWith({
       displayName: profile.displayName,
-      location: profile.location,
+      location: "Raleigh, NC",
       phone: null,
       representedAs: profile.representedAs,
       timezone: profile.timezone,
     });
-    expect(accountIdentity.syncAccountIdentity).toHaveBeenLastCalledWith(
-      profileWithoutPhone,
-    );
+    expect(accountIdentity.syncAccountIdentity).toHaveBeenLastCalledWith({
+      ...profileWithoutPhone,
+      location: "Raleigh, NC",
+    });
   });
 
   it("explains first-run profile setup without requiring a phone", async () => {
@@ -196,7 +208,7 @@ describe("account pages", () => {
 
     expect(api.updateSettings).not.toHaveBeenCalled();
 
-    await wrapper.get<HTMLInputElement>(".switch input").setValue(false);
+    await wrapper.get("#evidence-retention").setValue("90");
     await vi.advanceTimersByTimeAsync(599);
     expect(api.updateSettings).not.toHaveBeenCalled();
 
@@ -208,10 +220,12 @@ describe("account pages", () => {
       aiDisclosure: true,
       callbackAlerts: settings.callbackAlerts,
       callMilestones: settings.callMilestones,
-      emailUpdates: false,
-      evidenceRetentionDays: settings.evidenceRetentionDays,
+      emailUpdates: settings.emailUpdates,
+      evidenceRetentionDays: 90,
       recordingConsentDefault: settings.recordingConsentDefault,
     });
+    expect(wrapper.text()).toContain("Email delivery is not connected yet");
+    expect(wrapper.text()).toContain("Confirmed per request");
     expect(wrapper.text()).toContain("Clerk-secured account");
     expect(wrapper.text()).toContain("Protected");
   });

@@ -308,43 +308,63 @@ async function downloadDataExport(): Promise<void> {
             <header>
               <div>
                 <h2>Notifications</h2>
-                <p>Choose when Relay should contact you about a request.</p>
+                <p>
+                  Email delivery is not connected yet. These controls will be
+                  available only after Relay has a verified sender and delivery
+                  safeguards.
+                </p>
               </div>
+              <StatusBadge :dot="false" tone="warning"
+                >Not connected</StatusBadge
+              >
             </header>
             <div class="setting-row">
               <div>
                 <strong>Email updates</strong>
-                <p>Receive a concise summary when a request changes stage.</p>
+                <p>
+                  Stage summaries will be optional when delivery is enabled.
+                </p>
               </div>
               <label class="switch"
                 ><input
-                  v-model="settings.emailUpdates"
+                  :checked="false"
+                  disabled
                   type="checkbox"
-                /><span /><span class="sr-only">Email updates</span></label
+                /><span /><span class="sr-only"
+                  >Email updates are not available</span
+                ></label
               >
             </div>
             <div class="setting-row">
               <div>
                 <strong>Call milestones</strong>
-                <p>Notify me when calls start and when the report is ready.</p>
+                <p>Call and report alerts are not being delivered yet.</p>
               </div>
               <label class="switch"
                 ><input
-                  v-model="settings.callMilestones"
+                  :checked="false"
+                  disabled
                   type="checkbox"
-                /><span /><span class="sr-only">Call milestones</span></label
+                /><span /><span class="sr-only"
+                  >Call milestone alerts are not available</span
+                ></label
               >
             </div>
             <div class="setting-row">
               <div>
                 <strong>Callback alerts</strong>
-                <p>Tell me when a business promises or misses a callback.</p>
+                <p>
+                  Callback alerts remain visible inside the request timeline.
+                </p>
               </div>
               <label class="switch"
                 ><input
-                  v-model="settings.callbackAlerts"
+                  :checked="false"
+                  disabled
                   type="checkbox"
-                /><span /><span class="sr-only">Callback alerts</span></label
+                /><span /><span class="sr-only"
+                  >Email callback alerts are not available</span
+                ></label
               >
             </div>
           </section>
@@ -361,17 +381,15 @@ async function downloadDataExport(): Promise<void> {
             </header>
             <div class="setting-row">
               <div>
-                <strong>Recording consent</strong>
+                <strong>Per-request recording consent</strong>
                 <p>
-                  Allow Relay to retain call recordings as evidence for the
-                  selected period.
+                  Relay asks for recording and evidence consent against the
+                  exact brief before any business call starts. A reusable
+                  account default is not applied.
                 </p>
               </div>
-              <label class="switch"
-                ><input
-                  v-model="settings.recordingConsentDefault"
-                  type="checkbox"
-                /><span /><span class="sr-only">Recording consent</span></label
+              <StatusBadge :dot="false" tone="success"
+                >Confirmed per request</StatusBadge
               >
             </div>
             <div class="setting-row">

@@ -206,7 +206,9 @@ export function useLiveIntake() {
         },
         onError: (message) => {
           if (voiceStatus.value === "processing") return;
-          error.value = message || "The voice interview was interrupted.";
+          error.value = message
+            ? "The voice interview was interrupted. Try again or continue with the guided form."
+            : "The voice interview was interrupted.";
           voiceStatus.value = "error";
         },
         onModeChange: ({ mode }) => {

@@ -30,7 +30,6 @@ const moveDate = ref("");
 const homeSize = ref("2-bedroom apartment");
 const inventory = ref("");
 const access = ref("");
-const consent = ref(false);
 const stepHeading = ref<HTMLElement | null>(null);
 const creating = ref(false);
 const createError = ref("");
@@ -213,7 +212,7 @@ async function createRequest(): Promise<void> {
                 : step === 2
                   ? "Moving details"
                   : step === 3
-                    ? "Priorities and consent"
+                    ? "Priorities"
                     : "Review draft"
             }}</strong>
           </div>
@@ -532,17 +531,15 @@ async function createRequest(): Promise<void> {
                 timing without showing you the trade-off first.
               </p>
             </div>
-            <label class="consent-row">
-              <input v-model="consent" required type="checkbox" />
+            <div class="brief-tip">
               <span aria-hidden="true">✓</span>
-              <span
-                ><strong>Calling and evidence consent</strong
-                ><small
-                  >I understand Relay may conduct AI-assisted calls and retain
-                  recordings and transcripts for this request.</small
-                ></span
-              >
-            </label>
+              <p>
+                No business is called from this page. On the next screen you
+                will review the exact brief, the recording notice, and the
+                evidence-retention terms before giving consent.
+                <NuxtLink to="/privacy">Privacy details</NuxtLink>
+              </p>
+            </div>
           </fieldset>
 
           <fieldset v-else class="brief-step">
@@ -758,8 +755,7 @@ async function createRequest(): Promise<void> {
 .choice-card:hover {
   transform: translateY(-2px);
 }
-.choice-card:focus-within,
-.consent-row:focus-within {
+.choice-card:focus-within {
   outline: 3px solid rgb(49 87 246 / 24%);
   outline-offset: 2px;
 }
@@ -1002,51 +998,6 @@ async function createRequest(): Promise<void> {
   line-height: 1.5;
   margin: 0;
   padding-left: 19px;
-}
-.consent-row {
-  align-items: flex-start;
-  border: 1px solid var(--relay-line);
-  border-radius: 12px;
-  cursor: pointer;
-  display: grid;
-  gap: 10px;
-  grid-template-columns: auto 1fr;
-  margin-top: 16px;
-  padding: 13px;
-}
-.consent-row input {
-  clip: rect(0 0 0 0);
-  position: absolute;
-}
-.consent-row > span:first-of-type {
-  align-items: center;
-  background: var(--relay-blue);
-  border-radius: 6px;
-  color: white;
-  display: flex;
-  font-size: var(--relay-text-meta);
-  height: 19px;
-  justify-content: center;
-  width: 19px;
-}
-.consent-row input:not(:checked) + span {
-  background: white;
-  border: 1px solid var(--relay-line-strong);
-  color: transparent;
-}
-.consent-row strong,
-.consent-row small {
-  display: block;
-}
-.consent-row strong {
-  font-size: var(--relay-text-control);
-  font-weight: 610;
-}
-.consent-row small {
-  color: var(--relay-muted);
-  font-size: var(--relay-text-meta);
-  line-height: var(--relay-leading-meta);
-  margin-top: 4px;
 }
 .brief-review {
   border: 1px solid var(--relay-line);

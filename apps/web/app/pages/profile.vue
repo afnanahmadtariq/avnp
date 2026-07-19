@@ -2,6 +2,7 @@
 import type { RelayProfile, RelayProfileUpdate } from "~/types/api";
 
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { onBeforeRouteLeave } from "vue-router";
 
 import { useAccountIdentity } from "../composables/useAccountIdentity";
 import { useRelayApi } from "../composables/useRelayApi";
@@ -26,6 +27,7 @@ const profileForm = ref<HTMLFormElement | null>(null);
 const saveError = ref(false);
 const saved = ref(false);
 const saveFeedback = ref("");
+const savedProfile = ref<RelayProfileUpdate>();
 const profile = ref<RelayProfile>({
   displayName: "",
   email: "",
@@ -56,6 +58,14 @@ const profileDetailsReady = computed(() =>
 const callingIdentityReady = computed(() =>
   Boolean(profile.value.representedAs),
 );
+const hasUnsavedChanges = computed(() => {
+  if (!savedProfile.value) return false;
+
+  return (
+    JSON.stringify(profileUpdate(profile.value)) !==
+    JSON.stringify(savedProfile.value)
+  );
+});
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message.trim()
@@ -110,6 +120,7 @@ async function loadProfile(): Promise<void> {
 
   try {
     profile.value = normalizeProfile(await api.getProfile());
+    savedProfile.value = profileUpdate(profile.value);
     syncAccountIdentity(profile.value);
     isLoaded.value = true;
   } catch (error: unknown) {
@@ -123,17 +134,34 @@ async function loadProfile(): Promise<void> {
   }
 }
 
+function warnBeforeUnload(event: BeforeUnloadEvent): void {
+  if (!hasUnsavedChanges.value || isSaving.value) return;
+
+  event.preventDefault();
+  event.returnValue = "";
+}
+
 onMounted(() => {
+  window.addEventListener("beforeunload", warnBeforeUnload);
   void loadProfile();
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener("beforeunload", warnBeforeUnload);
   if (saveFeedbackTimeout) {
     window.clearTimeout(saveFeedbackTimeout);
   }
 });
 
+onBeforeRouteLeave(() => {
+  if (!hasUnsavedChanges.value || isSaving.value) return;
+
+  return window.confirm("Leave without saving your Relay profile changes?");
+});
+
 async function saveProfile(): Promise<void> {
+  if (!hasUnsavedChanges.value) return;
+
   if (!profileForm.value?.reportValidity()) {
     return;
   }
@@ -161,6 +189,7 @@ async function saveProfile(): Promise<void> {
     profile.value = normalizeProfile(
       await api.updateProfile(normalizedProfile),
     );
+    savedProfile.value = profileUpdate(profile.value);
     syncAccountIdentity(profile.value);
     saved.value = true;
     saveFeedback.value = "Profile saved to Relay.";
@@ -199,7 +228,7 @@ async function saveProfile(): Promise<void> {
         <div class="account-header__actions">
           <button
             class="button button--blue"
-            :disabled="!isLoaded || isLoading || isSaving"
+            :disabled="!isLoaded || isLoading || isSaving || !hasUnsavedChanges"
             form="profile-form"
             type="submit"
           >
@@ -281,12 +310,18 @@ async function saveProfile(): Promise<void> {
               </div>
               <div class="settings-fields">
                 <label
-                  >Full name<input
+                  >Relay display name<input
                     v-model="profile.displayName"
+                    aria-describedby="profile-name-help"
                     autocomplete="name"
                     :disabled="isSaving"
                     maxlength="120"
-                    required /></label
+                    required
+                  />
+                  <span id="profile-name-help" class="managed-field-help">
+                    Imported from sign-in when your account is created. You can
+                    choose how your name appears inside Relay.
+                  </span></label
                 ><label
                   >Email address<input
                     v-model="profile.email"
@@ -358,16 +393,6 @@ async function saveProfile(): Promise<void> {
                   </small>
                 </div>
               </div>
-            </div>
-            <div class="profile-form-actions">
-              <button
-                class="button button--blue"
-                :disabled="isSaving"
-                type="submit"
-              >
-                {{ isSaving ? "Saving changes" : "Save changes" }}
-                <span aria-hidden="true">→</span>
-              </button>
             </div>
           </form>
         </section>
@@ -658,9 +683,6 @@ async function saveProfile(): Promise<void> {
   line-height: var(--relay-leading-meta);
   margin-top: var(--relay-space-2);
 }
-.profile-form-actions {
-  display: none;
-}
 .account-aside {
   display: grid;
   gap: 14px;
@@ -761,15 +783,6 @@ async function saveProfile(): Promise<void> {
   }
   .account-aside {
     grid-template-columns: 1fr;
-  }
-  .profile-form-actions {
-    border-top: 1px solid var(--relay-line);
-    display: block;
-    padding: var(--relay-space-4);
-  }
-  .profile-form-actions .button {
-    justify-content: center;
-    width: 100%;
   }
 }
 </style>

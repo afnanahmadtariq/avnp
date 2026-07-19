@@ -43,7 +43,10 @@ export class RelayApiError extends Error {
   }
 }
 
-function errorMessage(error: unknown): string {
+const INTERNAL_SERVICE_ERROR =
+  /(?:elevenlabs|google places|openai|provider|redis|supabase|twilio|invalid response|stack|prisma)/i;
+
+export function relayApiErrorMessage(error: unknown): string {
   if (typeof error !== "object" || error === null) {
     return "Relay could not reach the service. Please try again.";
   }
@@ -54,17 +57,24 @@ function errorMessage(error: unknown): string {
     statusCode?: number;
     status?: number;
   };
+  const statusCode = candidate.statusCode ?? candidate.status;
   const responseMessage = candidate.data?.message;
+  const rawMessage = Array.isArray(responseMessage)
+    ? responseMessage.join(" ")
+    : (responseMessage ?? candidate.message);
 
-  if (Array.isArray(responseMessage)) {
-    return responseMessage.join(" ");
+  if (statusCode === 401) return "Your session expired. Sign in to continue.";
+  if (statusCode === 403) return "You do not have access to that Relay item.";
+  if (statusCode === 429)
+    return "Relay is handling a high number of requests. Try again shortly.";
+  if (
+    (statusCode !== undefined && statusCode >= 500) ||
+    (rawMessage !== undefined && INTERNAL_SERVICE_ERROR.test(rawMessage))
+  ) {
+    return "Relay could not complete that step. Try again, or open Support if it continues.";
   }
 
-  return (
-    responseMessage ??
-    candidate.message ??
-    "Relay could not reach the service. Please try again."
-  );
+  return rawMessage ?? "Relay could not reach the service. Please try again.";
 }
 
 export function useRelayApi() {
@@ -98,7 +108,7 @@ export function useRelayApi() {
           query: { redirect_url: route.fullPath },
         });
       }
-      throw new RelayApiError(errorMessage(error), statusCode);
+      throw new RelayApiError(relayApiErrorMessage(error), statusCode);
     }
   }
 
