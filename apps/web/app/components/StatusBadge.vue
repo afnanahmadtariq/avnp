@@ -26,7 +26,7 @@ withDefaults(
   border-radius: 999px;
   color: var(--relay-muted);
   display: inline-flex;
-  font-size: 0.69rem;
+  font-size: var(--relay-text-meta, 0.75rem);
   font-weight: 560;
   gap: 6px;
   line-height: 1;

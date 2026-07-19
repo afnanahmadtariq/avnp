@@ -4,7 +4,7 @@
   --relay-surface-muted: #f1f1ee;
   --relay-ink: var(--relay-text, #101114);
   --relay-ink-soft: #343431;
-  --relay-faint: #96968f;
+  --relay-faint: #73746f;
   --relay-line: var(--relay-border, #e5e3dc);
   --relay-line-strong: var(--relay-border-strong, #d4d1c8);
   --relay-blue: var(--relay-accent, #3157f6);
@@ -21,6 +21,7 @@
   --relay-shadow-md: 0 18px 50px rgb(17 17 16 / 8%);
   --relay-radius: var(--relay-radius-md, 16px);
   --relay-container: 1180px;
+  --relay-canvas-app: #f6f7f9;
 }
 
 *,
@@ -30,6 +31,7 @@
 }
 
 html {
+  overflow-x: clip;
   scroll-behavior: smooth;
   text-rendering: optimizeLegibility;
 }
@@ -37,6 +39,7 @@ html {
 body {
   background: var(--relay-page);
   color: var(--relay-ink);
+  font-size: var(--relay-text-body, 0.9375rem);
   font-family:
     Geist,
     Inter,
@@ -45,6 +48,7 @@ body {
     BlinkMacSystemFont,
     "Segoe UI",
     sans-serif;
+  line-height: var(--relay-leading-body, 1.55);
   margin: 0;
   min-width: 320px;
 }
@@ -79,6 +83,13 @@ h4 {
   margin-top: 0;
 }
 
+h1,
+h2,
+h3,
+h4 {
+  line-height: var(--relay-leading-heading, 1.25);
+}
+
 ::selection {
   background: #dbe7ff;
   color: var(--relay-ink);
@@ -87,6 +98,10 @@ h4 {
 :focus-visible {
   outline: 3px solid rgb(37 99 235 / 28%);
   outline-offset: 3px;
+}
+
+main[tabindex="-1"]:focus {
+  outline: none;
 }
 
 .skip-link {
@@ -116,9 +131,10 @@ h4 {
 
 .eyebrow {
   color: var(--relay-blue);
-  font-size: 0.72rem;
+  font-size: var(--relay-text-meta, 0.75rem);
   font-weight: 600;
   letter-spacing: 0.11em;
+  line-height: var(--relay-leading-meta, 1.4);
   margin-bottom: 18px;
   text-transform: uppercase;
 }
@@ -128,7 +144,7 @@ h4 {
   border: 1px solid transparent;
   border-radius: 12px;
   display: inline-flex;
-  font-size: 0.87rem;
+  font-size: var(--relay-text-control, 0.875rem);
   font-weight: 560;
   gap: 9px;
   justify-content: center;
@@ -219,8 +235,8 @@ h4 {
 
 @media (max-width: 640px) {
   .container {
-    padding-left: 18px;
-    padding-right: 18px;
+    padding-left: var(--relay-page-gutter-mobile, 16px);
+    padding-right: var(--relay-page-gutter-mobile, 16px);
   }
 
   .button {
