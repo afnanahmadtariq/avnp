@@ -35,6 +35,12 @@ importers:
       '@relay/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@relay/database':
+        specifier: workspace:*
+        version: link:../../packages/database
+      '@relay/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
       class-transformer:
         specifier: 0.5.1
         version: 0.5.1
