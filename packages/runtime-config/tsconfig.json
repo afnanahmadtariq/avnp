@@ -1,0 +1,10 @@
+{
+  "extends": "@relay/typescript-config/node.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "src",
+    "tsBuildInfoFile": "node_modules/.cache/runtime-config.tsbuildinfo",
+    "types": ["node", "vitest/globals"]
+  },
+  "include": ["src/**/*.ts"]
+}

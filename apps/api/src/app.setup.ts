@@ -2,6 +2,10 @@ import { ValidationPipe, type INestApplication } from "@nestjs/common";
 
 import { API_PREFIX, DEFAULT_LOCAL_CORS_ORIGINS } from "./app.constants.js";
 
+interface ApplicationOptions {
+  readonly corsOrigins?: readonly string[] | "*";
+}
+
 export function resolveCorsOrigins(
   value = process.env.CORS_ORIGINS,
 ): true | string[] {
@@ -19,10 +23,18 @@ export function resolveCorsOrigins(
     : [...DEFAULT_LOCAL_CORS_ORIGINS];
 }
 
-export function configureApplication(app: INestApplication): void {
+export function configureApplication(
+  app: INestApplication,
+  options: ApplicationOptions = {},
+): void {
   app.setGlobalPrefix(API_PREFIX);
   app.enableCors({
-    origin: resolveCorsOrigins(),
+    origin:
+      options.corsOrigins === "*"
+        ? true
+        : options.corsOrigins
+          ? [...options.corsOrigins]
+          : resolveCorsOrigins(),
   });
   app.useGlobalPipes(
     new ValidationPipe({

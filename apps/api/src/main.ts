@@ -3,31 +3,17 @@ import "reflect-metadata";
 import { Logger, ShutdownSignal } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 
-import { DEFAULT_API_HOST, DEFAULT_API_PORT } from "./app.constants.js";
 import { AppModule } from "./app.module.js";
 import { configureApplication } from "./app.setup.js";
-
-function resolvePort(value = process.env.API_PORT): number {
-  const port = value === undefined ? DEFAULT_API_PORT : Number(value);
-
-  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
-    throw new Error(
-      `API_PORT must be an integer between 1 and 65535; received ${value}`,
-    );
-  }
-
-  return port;
-}
+import { RuntimeConfigService } from "./config/runtime-config.service.js";
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule);
-  configureApplication(app);
+  const app = await NestFactory.create(AppModule, { rawBody: true });
+  const config = app.get(RuntimeConfigService).value;
+  configureApplication(app, { corsOrigins: config.api.corsOrigins });
   app.enableShutdownHooks([ShutdownSignal.SIGINT, ShutdownSignal.SIGTERM]);
 
-  const host = process.env.API_HOST?.trim() || DEFAULT_API_HOST;
-  const port = resolvePort();
-
-  await app.listen(port, host);
+  await app.listen(config.api.port, config.api.host);
   Logger.log(`API ready at ${await app.getUrl()}/api/v1`, "Bootstrap");
 }
 

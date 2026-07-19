@@ -16,7 +16,9 @@ import {
 import type { DatabaseClient, Prisma } from "@relay/database";
 import { rankQuotes } from "@relay/domain";
 
-// PrismaService must remain a runtime import for Nest dependency injection metadata.
+// Nest constructor dependencies must remain runtime imports for emitted metadata.
+// eslint-disable-next-line @typescript-eslint/consistent-type-imports
+import { RuntimeConfigService } from "../config/runtime-config.service.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { PrismaService } from "../database/prisma.service.js";
 import {
@@ -357,14 +359,17 @@ function toContractQuote(quote: RunQuoteRecord): Quote {
 export class ProductService implements OnApplicationBootstrap {
   private readonly logger = new Logger(ProductService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly runtimeConfig: RuntimeConfigService,
+  ) {}
 
   private get database(): DatabaseClient {
     return this.prisma.client;
   }
 
   async onApplicationBootstrap(): Promise<void> {
-    if (!this.prisma.configured || process.env.NODE_ENV === "production") {
+    if (!this.prisma.configured || this.runtimeConfig.value.mode === "live") {
       return;
     }
 
