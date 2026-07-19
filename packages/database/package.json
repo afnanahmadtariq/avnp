@@ -21,7 +21,7 @@
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:reset": "prisma db push --force-reset && corepack pnpm run db:seed",
-    "db:seed": "corepack pnpm run db:generate && node prisma/seed.mjs",
+    "db:seed": "corepack pnpm run db:generate && tsc -p tsconfig.build.json && node prisma/seed.mjs",
     "db:validate": "prisma validate",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "corepack pnpm run db:generate && tsc --noEmit"
