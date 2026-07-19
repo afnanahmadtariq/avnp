@@ -21,7 +21,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@relay/contracts": "workspace:*"
+    "@relay/contracts": "workspace:*",
+    "bullmq": "5.79.3"
   },
   "devDependencies": {
     "@relay/eslint-config": "workspace:*",

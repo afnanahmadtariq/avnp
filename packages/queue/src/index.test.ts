@@ -2,10 +2,18 @@ import { describe, expect, it } from "vitest";
 
 import {
   createQueueJob,
+  createQueueJobId,
+  DisabledQueueProducer,
   getQueueName,
+  InvalidQueueJobError,
+  parseQueueJobEnvelope,
+  QueueConfigurationError,
+  QueueUnavailableError,
   queueForJob,
   queueJobNames,
   queueNames,
+  queueRetryPolicies,
+  resolveQueueRuntimeConfiguration,
 } from "./index.js";
 
 describe("queue contracts", () => {
@@ -18,6 +26,7 @@ describe("queue contracts", () => {
 
     for (const jobName of Object.values(queueJobNames)) {
       expect(declaredQueues.has(getQueueName(jobName))).toBe(true);
+      expect(queueRetryPolicies[jobName].attempts).toBeGreaterThan(1);
     }
   });
 
@@ -31,21 +40,7 @@ describe("queue contracts", () => {
   });
 
   it("uses identifiers instead of embedding persistence records", () => {
-    const job = createQueueJob(
-      queueJobNames.discoverBusinesses,
-      {
-        jobId: "job_1",
-        limit: 3,
-        runId: "run_1",
-        searchRadiusKm: 25,
-        specificationVersionId: "specification_version_1",
-      },
-      {
-        idempotencyKey: "run_1:discover",
-        requestedAt: "2026-07-19T00:00:00.000Z",
-        traceId: "trace_1",
-      },
-    );
+    const job = discoverBusinessesJob();
 
     expect(job.payload).toEqual({
       jobId: "job_1",
@@ -54,5 +49,115 @@ describe("queue contracts", () => {
       searchRadiusKm: 25,
       specificationVersionId: "specification_version_1",
     });
+    expect(parseQueueJobEnvelope(job)).toEqual(job);
+  });
+
+  it("rejects malformed or expanded payloads before processing", () => {
+    const job = discoverBusinessesJob();
+
+    expect(() =>
+      parseQueueJobEnvelope({
+        ...job,
+        payload: {
+          ...job.payload,
+          customerAddress: "must not enter a queue payload",
+        },
+      }),
+    ).toThrow(InvalidQueueJobError);
+  });
+
+  it("creates stable BullMQ-safe IDs without exposing the idempotency key", () => {
+    const job = discoverBusinessesJob();
+    const firstId = createQueueJobId(job);
+
+    expect(createQueueJobId(job)).toBe(firstId);
+    expect(firstId).not.toContain(":");
+    expect(firstId).not.toContain(job.idempotencyKey);
+    expect(
+      createQueueJobId({ ...job, idempotencyKey: "run_1:discover:other" }),
+    ).not.toBe(firstId);
   });
 });
+
+describe("queue runtime configuration", () => {
+  it("stays disabled by default even when a local Redis URL exists", () => {
+    expect(
+      resolveQueueRuntimeConfiguration({
+        NODE_ENV: "development",
+        REDIS_URL: "redis://localhost:6379",
+      }),
+    ).toMatchObject({ enabled: false, provider: "memory" });
+  });
+
+  it("enables Redis only when explicitly selected and configured", () => {
+    expect(
+      resolveQueueRuntimeConfiguration({
+        NODE_ENV: "development",
+        QUEUE_PROVIDER: "redis",
+        REDIS_URL: "rediss://relay:secret@redis.example.com:6380/2",
+      }),
+    ).toEqual({
+      enabled: true,
+      prefix: "relay",
+      provider: "redis",
+      redisUrl: "rediss://relay:secret@redis.example.com:6380/2",
+    });
+  });
+
+  it("gracefully disables a local Redis provider without a URL", () => {
+    expect(
+      resolveQueueRuntimeConfiguration({
+        NODE_ENV: "development",
+        QUEUE_PROVIDER: "redis",
+      }),
+    ).toMatchObject({ enabled: false, provider: "redis" });
+  });
+
+  it("fails closed when production Redis configuration is missing", () => {
+    expect(() =>
+      resolveQueueRuntimeConfiguration({
+        NODE_ENV: "production",
+        QUEUE_PROVIDER: "redis",
+      }),
+    ).toThrow(QueueConfigurationError);
+  });
+
+  it("rejects unsupported providers and connection protocols", () => {
+    expect(() =>
+      resolveQueueRuntimeConfiguration({ QUEUE_PROVIDER: "unknown" }),
+    ).toThrow(QueueConfigurationError);
+    expect(() =>
+      resolveQueueRuntimeConfiguration({
+        QUEUE_PROVIDER: "redis",
+        REDIS_URL: "https://redis.example.com",
+      }),
+    ).toThrow(QueueConfigurationError);
+  });
+
+  it("never silently accepts work while disabled", async () => {
+    const producer = new DisabledQueueProducer("Redis is not configured");
+
+    await expect(producer.enqueue(discoverBusinessesJob())).rejects.toThrow(
+      QueueUnavailableError,
+    );
+    await expect(producer.close()).resolves.toBeUndefined();
+  });
+});
+
+function discoverBusinessesJob() {
+  return createQueueJob(
+    queueJobNames.discoverBusinesses,
+    {
+      jobId: "job_1",
+      limit: 3,
+      runId: "run_1",
+      searchRadiusKm: 25,
+      specificationVersionId: "specification_version_1",
+    },
+    {
+      idempotencyKey: "run_1:discover",
+      requestedAt: "2026-07-19T00:00:00.000Z",
+      traceId: "trace_1",
+    },
+  );
+}

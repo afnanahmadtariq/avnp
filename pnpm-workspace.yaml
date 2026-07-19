@@ -18,6 +18,9 @@ allowBuilds:
   "@parcel/watcher": true
   "@prisma/engines": true
   esbuild: true
+  # BullMQ can use this optional native accelerator. Relay intentionally uses
+  # msgpackr's portable JavaScript implementation for reproducible installs.
+  msgpackr-extract: false
   prisma: true
   sharp: true
   unrs-resolver: true
