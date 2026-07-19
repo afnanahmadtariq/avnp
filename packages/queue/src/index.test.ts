@@ -52,6 +52,48 @@ describe("queue contracts", () => {
     expect(parseQueueJobEnvelope(job)).toEqual(job);
   });
 
+  it("supports job-scoped discovery without manufacturing a run id", () => {
+    const job = createQueueJob(
+      queueJobNames.discoverBusinesses,
+      {
+        jobId: "job_1",
+        limit: 3,
+        searchRadiusKm: 25,
+        specificationVersionId: "specification_version_1",
+      },
+      { idempotencyKey: "job_1:discover", traceId: "trace_1" },
+    );
+
+    expect(parseQueueJobEnvelope(job)).toEqual(job);
+  });
+
+  it("requires the source call when normalizing a quote", () => {
+    const job = createQueueJob(
+      queueJobNames.normalizeQuote,
+      { callId: "call_1", quoteId: "quote_1", runId: "run_1" },
+      { idempotencyKey: "quote_1:normalize", traceId: "trace_1" },
+    );
+
+    expect(parseQueueJobEnvelope(job)).toEqual(job);
+    expect(() =>
+      parseQueueJobEnvelope({
+        ...job,
+        payload: { quoteId: "quote_1", runId: "run_1" },
+      }),
+    ).toThrow(InvalidQueueJobError);
+  });
+
+  it("routes provider cancellation through the call execution queue", () => {
+    const job = createQueueJob(
+      queueJobNames.cancelCall,
+      { callId: "call_1", runId: "run_1" },
+      { idempotencyKey: "call_1:cancel", traceId: "trace_1" },
+    );
+
+    expect(getQueueName(job.name)).toBe(queueNames.callExecution);
+    expect(parseQueueJobEnvelope(job)).toEqual(job);
+  });
+
   it("rejects malformed or expanded payloads before processing", () => {
     const job = discoverBusinessesJob();
 
