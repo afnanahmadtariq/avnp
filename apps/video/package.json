@@ -11,6 +11,10 @@
     "render": "pnpm render:mp4 && pnpm render:webm && pnpm render:poster",
     "render:mp4": "remotion render src/index.ts RelayDemo dist/relay-demo.mp4 --codec=h264 --audio-codec=aac --crf=16 --pixel-format=yuv420p --color-space=bt709 --image-format=png --concurrency=50% --public-dir=public",
     "render:poster": "remotion still src/index.ts RelayDemo dist/relay-demo-poster.png --frame=1480 --image-format=png --public-dir=public",
+    "render:tech": "pnpm render:tech:mp4 && pnpm render:tech:webm && pnpm render:tech:poster",
+    "render:tech:mp4": "remotion render src/index.ts RelayTech dist/relay-tech-overview.mp4 --codec=h264 --audio-codec=aac --crf=16 --pixel-format=yuv420p --color-space=bt709 --image-format=png --concurrency=50% --public-dir=public",
+    "render:tech:poster": "remotion still src/index.ts RelayTech dist/relay-tech-overview-poster.png --frame=270 --image-format=png --public-dir=public",
+    "render:tech:webm": "remotion render src/index.ts RelayTech dist/relay-tech-overview.webm --codec=vp9 --audio-codec=opus --crf=20 --image-format=png --concurrency=50% --public-dir=public",
     "render:webm": "remotion render src/index.ts RelayDemo dist/relay-demo.webm --codec=vp9 --audio-codec=opus --crf=20 --image-format=png --concurrency=50% --public-dir=public",
     "test": "tsc --noEmit",
     "typecheck": "tsc --noEmit"

@@ -6,7 +6,7 @@ The first product experience focuses on moving services: a customer confirms one
 
 [![Watch the 60-second Relay product demo](assets/demo/relay-demo-poster.png)](assets/demo/relay-demo.mp4)
 
-[Watch the 60-second product demo](assets/demo/relay-demo.mp4)
+[Watch the 60-second product demo](assets/demo/relay-demo.mp4) · [Watch the 59-second technical overview](assets/demo/relay-tech-overview.mp4) · [Open the editable video package](apps/video/README.md)
 
 ## Current foundation
 
@@ -70,21 +70,22 @@ Applications may depend on packages; packages never depend on applications. Prov
 
 ## Common commands
 
-| Command             | Purpose                                                  |
-| ------------------- | -------------------------------------------------------- |
-| `pnpm dev:web`      | Run the Nuxt frontend.                                   |
-| `pnpm dev:api`      | Run the API locally.                                     |
-| `pnpm dev:worker`   | Run the background worker.                               |
-| `pnpm video:dev`    | Open the editable Relay video composition.               |
-| `pnpm video:render` | Render the MP4, WebM, and poster assets.                 |
-| `pnpm build`        | Build every application and package in dependency order. |
-| `pnpm lint`         | Run repository lint checks.                              |
-| `pnpm typecheck`    | Run strict TypeScript checks.                            |
-| `pnpm test`         | Run credential-free automated tests.                     |
-| `pnpm format:check` | Verify formatting.                                       |
-| `pnpm check`        | Run the complete local quality gate.                     |
-| `pnpm db:generate`  | Generate the Prisma client.                              |
-| `pnpm db:validate`  | Validate the Prisma schema.                              |
+| Command                  | Purpose                                                  |
+| ------------------------ | -------------------------------------------------------- |
+| `pnpm dev:web`           | Run the Nuxt frontend.                                   |
+| `pnpm dev:api`           | Run the API locally.                                     |
+| `pnpm dev:worker`        | Run the background worker.                               |
+| `pnpm video:dev`         | Open the editable Relay video composition.               |
+| `pnpm video:render`      | Render the MP4, WebM, and poster assets.                 |
+| `pnpm video:render:tech` | Render the technical MP4, WebM, and poster assets.       |
+| `pnpm build`             | Build every application and package in dependency order. |
+| `pnpm lint`              | Run repository lint checks.                              |
+| `pnpm typecheck`         | Run strict TypeScript checks.                            |
+| `pnpm test`              | Run credential-free automated tests.                     |
+| `pnpm format:check`      | Verify formatting.                                       |
+| `pnpm check`             | Run the complete local quality gate.                     |
+| `pnpm db:generate`       | Generate the Prisma client.                              |
+| `pnpm db:validate`       | Validate the Prisma schema.                              |
 
 ## Project details
 

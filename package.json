@@ -29,7 +29,8 @@
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
     "video:dev": "corepack pnpm --filter @relay/video dev",
-    "video:render": "corepack pnpm --filter @relay/video render"
+    "video:render": "corepack pnpm --filter @relay/video render",
+    "video:render:tech": "corepack pnpm --filter @relay/video render:tech"
   },
   "devDependencies": {
     "prettier": "3.9.5",

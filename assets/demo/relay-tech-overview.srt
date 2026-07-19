@@ -1,0 +1,35 @@
+1
+00:00:00,200 --> 00:00:05,000
+Relay turns one confirmed customer brief into multiple verifiable offers. Here is how.
+
+2
+00:00:05,000 --> 00:00:10,200
+The Nuxt experience sends a Zod-validated brief to the NestJS API.
+
+3
+00:00:10,200 --> 00:00:16,000
+PostgreSQL stores an immutable version, then Relay writes the run and outbox event in one transaction.
+
+4
+00:00:16,000 --> 00:00:23,333
+Redis and BullMQ move identifiers—not transcripts or secrets—to a retry-safe worker.
+
+5
+00:00:23,333 --> 00:00:28,133
+Provider adapters keep infrastructure replaceable. Google Places discovers businesses.
+
+6
+00:00:28,133 --> 00:00:35,266
+ElevenLabs runs calls. OpenAI structures outcomes. Private evidence lives in Supabase Storage.
+
+7
+00:00:35,266 --> 00:00:44,600
+Deterministic policy normalizes fees, rejects unsupported leverage, and ranks only evidenced quotes.
+
+8
+00:00:44,600 --> 00:00:51,666
+Progress streams back so customers see calls, quote movement, and final reasoning as it happens.
+
+9
+00:00:51,666 --> 00:00:56,266
+One immutable brief. Durable orchestration. Truthful negotiation. Verifiable decisions.

@@ -1,0 +1,13 @@
+Relay turns one confirmed customer brief into multiple verifiable offers. Here is how.
+
+The Nuxt experience sends a Zod-validated brief to the NestJS API. PostgreSQL stores an immutable version, then Relay writes the negotiation run and its outbox event in one transaction.
+
+Redis and BullMQ move identifiers—not transcripts or secrets—to a long-running worker. Jobs are idempotent, retry-safe, and calls run in parallel.
+
+Provider adapters keep infrastructure replaceable. Google Places discovers businesses. ElevenLabs, through a native Twilio number, runs the calls. OpenAI converts transcripts into structured outcomes. Private recordings and evidence live in Supabase Storage.
+
+Then deterministic domain policy takes over: normalize every fee, reject stale or unsupported leverage, rank only evidenced quotes, and attach every recommendation to its source.
+
+Progress events stream back through the API, so customers see calls, quote movement, and final reasoning as it happens.
+
+One immutable brief. Durable orchestration. Truthful negotiation. Verifiable decisions. That is Relay.
