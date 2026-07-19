@@ -6,7 +6,7 @@ The first product experience focuses on moving services: a customer confirms one
 
 | 60-second product demo                                                                                     | 59-second technical overview                                                                                                       |
 | ---------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| [![Watch the 60-second Relay product demo](assets/demo/relay-demo-poster.png)](assets/demo/relay-demo.mp4) | [![Watch the 59-second Relay technical overview](assets/demo/relay-tech-overview-poster.png)](assets/demo/relay-tech-overview.mp4) |
+| [![Watch the Relay product demo](assets/demo/relay-demo-poster.png)](assets/demo/relay-demo.mp4) | [![Watch the Relay technical overview](assets/demo/relay-tech-overview-poster.png)](assets/demo/relay-tech-overview.mp4) |
 
 [Watch the 60-second product demo](assets/demo/relay-demo.mp4) · [Watch the 59-second technical overview](assets/demo/relay-tech-overview.mp4)
 
