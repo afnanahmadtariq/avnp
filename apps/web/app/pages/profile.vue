@@ -376,8 +376,8 @@ async function saveProfile(): Promise<void> {
                 <div class="identity-preview">
                   <span>Call introduction</span>
                   <p>
-                    “Hello, I’m Relay, an AI purchasing assistant calling on
-                    behalf of <strong>{{ profile.representedAs }}</strong
+                    “Hello, I’m Sara, Relay’s AI assistant, calling on behalf of
+                    <strong>{{ profile.representedAs }}</strong
                     >.”
                   </p>
                 </div>

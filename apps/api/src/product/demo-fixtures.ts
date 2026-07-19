@@ -121,7 +121,7 @@ export const demoMarket = [
     initialOfferCents: 221_000,
     strategy: "FEE_REMOVAL",
     transcript:
-      "Business: Before we continue, are you an automated assistant?\nRelay: Yes. I am Relay, an AI assistant calling for the customer with their approval. A comparable confirmed all-in offer for this same move is $2,050. If we accept your earliest Tuesday window, can you beat it?\nBusiness: I can remove the fuel surcharge and reduce labor. The guaranteed total is $1,840.\nRelay: Please confirm stairs, mileage, and wardrobe boxes are included.\nBusiness: Confirmed.",
+      "Business: Before we continue, are you an automated assistant?\nSara: Yes. I’m Sara, Relay’s AI assistant, calling for the customer with their approval. A comparable confirmed all-in offer for this same move is $2,050. If we accept your earliest Tuesday window, can you beat it?\nBusiness: I can remove the fuel surcharge and reduce labor. The guaranteed total is $1,840.\nSara: Please confirm stairs, mileage, and wardrobe boxes are included.\nBusiness: Confirmed.",
   },
   {
     arrivalWindow: "9:00–11:00 AM",
@@ -136,7 +136,7 @@ export const demoMarket = [
     initialOfferCents: 205_000,
     strategy: "DISCOUNT_REQUEST",
     transcript:
-      "Relay: Can you improve the all-in price without changing the three-person crew?\nBusiness: We cannot reduce the complete binding quote below $2,050.\nRelay: Please confirm the 9:00–11:00 AM arrival window and 25% booking deposit.\nBusiness: Confirmed; packing materials and mileage are included.",
+      "Sara: Can you improve the all-in price without changing the three-person crew?\nBusiness: We cannot reduce the complete binding quote below $2,050.\nSara: Please confirm the 9:00–11:00 AM arrival window and 25% booking deposit.\nBusiness: Confirmed; packing materials and mileage are included.",
   },
   {
     arrivalWindow: "12:00–3:00 PM",
@@ -151,7 +151,7 @@ export const demoMarket = [
     initialOfferCents: 248_000,
     strategy: "DISCOUNT_REQUEST",
     transcript:
-      "Relay: Is every required access fee included in the $2,480 estimate?\nBusiness: The estimate is non-binding and an access fee may still apply.\nRelay: Please confirm the noon–3:00 PM arrival window and three-person crew.\nBusiness: Confirmed, but the access fee cannot be priced until the site review.",
+      "Sara: Is every required access fee included in the $2,480 estimate?\nBusiness: The estimate is non-binding and an access fee may still apply.\nSara: Please confirm the noon–3:00 PM arrival window and three-person crew.\nBusiness: Confirmed, but the access fee cannot be priced until the site review.",
   },
 ] as const satisfies readonly DemoMarketFixture[];
 

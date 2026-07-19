@@ -79,14 +79,14 @@ function transcriptEntries(call: RunCall): Negotiation["transcript"] {
     .filter(Boolean);
 
   return (
-    lines.length > 0 ? lines : ["Relay: Waiting for transcript updates."]
+    lines.length > 0 ? lines : ["Sara: Waiting for transcript updates."]
   ).map((line, index) => {
     const businessLine = /^business:/i.test(line);
 
     return {
       at: `00:${String(index + 1).padStart(2, "0")}`,
-      speaker: businessLine ? ("Business" as const) : ("Relay" as const),
-      text: line.replace(/^(relay|business):\s*/i, ""),
+      speaker: businessLine ? ("Business" as const) : ("Sara" as const),
+      text: line.replace(/^(relay|sara|business):\s*/i, ""),
     };
   });
 }

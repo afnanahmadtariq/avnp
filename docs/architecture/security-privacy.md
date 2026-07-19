@@ -9,7 +9,7 @@ This is engineering guidance, not legal advice. Calling, recording, automated-ag
 ## Hard product constraints
 
 - Do not invent inventory, service requirements, competing bids, identities, authority, or commitments.
-- Disclose that the caller is an AI when asked and follow configured proactive-disclosure rules.
+- Introduce the caller as Sara, Relay's AI assistant, at the start of every call and answer follow-up identity questions truthfully.
 - Obtain and record the required customer and call-recording consent before storing audio.
 - Permit human intervention, cancellation, and deletion requests through explicit states.
 - Keep evidence of which confirmed specification and real quote supported each negotiation claim.

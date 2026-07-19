@@ -450,8 +450,10 @@ onBeforeUnmount(() => {
               <li>
                 <span aria-hidden="true">2</span>
                 <div>
-                  <strong>Disclose AI when asked</strong
-                  ><small>No invented facts, bids, or authority.</small>
+                  <strong>Introduce Sara as Relay’s AI assistant</strong
+                  ><small
+                    >Disclose at the start; never invent facts or bids.</small
+                  >
                 </div>
               </li>
               <li>

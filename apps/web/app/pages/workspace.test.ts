@@ -79,7 +79,7 @@ const run = {
       outcome: "quote_received",
       progress: 100,
       status: "completed",
-      transcript: "Relay: Confirming the same scope.",
+      transcript: "Sara: Confirming the same scope.",
     },
     {
       businessId: "carolina",
@@ -205,6 +205,10 @@ describe("workspace page", () => {
     );
     expect(wrapper.get(".selected-quote").text()).toContain(
       "4 verified evidence points",
+    );
+    expect(wrapper.get(".transcript li strong").text()).toBe("Sara");
+    expect(wrapper.get(".transcript li p").text()).toBe(
+      "Confirming the same scope.",
     );
 
     await callButtons[1]?.trigger("click");

@@ -2,7 +2,7 @@ export type NegotiationTone = "complete" | "live" | "received";
 
 export interface TranscriptEntry {
   at: string;
-  speaker: "Relay" | "Business";
+  speaker: "Sara" | "Business";
   text: string;
 }
 
@@ -82,7 +82,7 @@ export const negotiations: Negotiation[] = [
     transcript: [
       {
         at: "12:38",
-        speaker: "Relay",
+        speaker: "Sara",
         text: "The inventory and access are unchanged. If we accept your earliest Tuesday window, can you improve the all-in price?",
       },
       {
@@ -92,7 +92,7 @@ export const negotiations: Negotiation[] = [
       },
       {
         at: "12:42",
-        speaker: "Relay",
+        speaker: "Sara",
         text: "Please confirm that includes stairs, mileage, and the two wardrobe boxes with no same-day add-ons.",
       },
       {
@@ -138,7 +138,7 @@ export const negotiations: Negotiation[] = [
     transcript: [
       {
         at: "12:44",
-        speaker: "Relay",
+        speaker: "Sara",
         text: "Your $1,920 total is competitive. The remaining difference is the 40% deposit and three-hour arrival window.",
       },
       {
@@ -148,7 +148,7 @@ export const negotiations: Negotiation[] = [
       },
       {
         at: "12:45",
-        speaker: "Relay",
+        speaker: "Sara",
         text: "Thank you. I can hold while you confirm both terms without changing the quoted inventory.",
       },
     ],
@@ -183,7 +183,7 @@ export const negotiations: Negotiation[] = [
     transcript: [
       {
         at: "12:31",
-        speaker: "Relay",
+        speaker: "Sara",
         text: "Can you improve the price while keeping the three-person crew and the confirmed inventory unchanged?",
       },
       {
@@ -193,7 +193,7 @@ export const negotiations: Negotiation[] = [
       },
       {
         at: "12:34",
-        speaker: "Relay",
+        speaker: "Sara",
         text: "We will keep the comparable three-person scope. Please send the itemized $2,110 quote.",
       },
     ],
