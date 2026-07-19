@@ -747,7 +747,14 @@ function badgeTone(
                 <details class="evidence-drawer" open>
                   <summary>
                     Verified evidence
-                    <span>{{ activeNegotiation.evidence.length }} items</span>
+                    <span>
+                      {{ activeNegotiation.evidence.length }}
+                      {{
+                        activeNegotiation.evidence.length === 1
+                          ? "item"
+                          : "items"
+                      }}
+                    </span>
                   </summary>
                   <ul>
                     <li

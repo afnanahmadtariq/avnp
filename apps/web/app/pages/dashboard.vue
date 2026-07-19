@@ -2,23 +2,16 @@
 import { computed, onMounted, ref } from "vue";
 
 import ApiFeedback from "~/components/app/ApiFeedback.vue";
-import { useAccountIdentity } from "~/composables/useAccountIdentity";
 import type { JobSummary } from "~/types/api";
 import { formatCurrency } from "~/utils/currency";
 
 useSeoMeta({ title: "Dashboard · Relay" });
 
 const api = useRelayApi();
-const { firstName, isLoaded: accountIdentityLoaded } = useAccountIdentity();
 const { setCurrent } = useRequestContext();
 const jobs = ref<JobSummary[]>([]);
 const pending = ref(true);
 const loadError = ref("");
-const accountGreeting = computed(() =>
-  accountIdentityLoaded.value
-    ? `Welcome back, ${firstName.value}.`
-    : "Welcome back.",
-);
 
 const activeJobs = computed(
   () =>
@@ -151,7 +144,7 @@ onMounted(loadJobs);
       <header class="product-page-header">
         <div>
           <p class="product-kicker">Your Relay workspace</p>
-          <h1>{{ accountGreeting }}</h1>
+          <h1>Welcome back.</h1>
           <p>Keep an eye on your active negotiation or start something new.</p>
         </div>
         <NuxtLink class="button button--blue" to="/start"

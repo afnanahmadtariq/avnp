@@ -34,6 +34,17 @@ export default defineNuxtConfig({
   devtools: {
     enabled: false,
   },
+  hooks: {
+    "app:resolve": (app) => {
+      // Nuxt 4.5 misclassifies this bundled diagnostic's re-exported default.
+      app.plugins = app.plugins.filter(
+        (plugin) =>
+          !plugin.src
+            .replaceAll("\\", "/")
+            .includes("/nuxt/dist/pages/runtime/plugins/check-if-page-unused"),
+      );
+    },
+  },
   modules: ["@nuxt/eslint"],
   runtimeConfig: {
     public: {

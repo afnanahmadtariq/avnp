@@ -399,8 +399,19 @@ onMounted(() => void loadReport());
                   <dd>{{ selectedOffer.score }}/100</dd>
                 </div>
                 <div>
+                  <dt>Rating</dt>
+                  <dd>
+                    {{ selectedOffer.rating }} ·
+                    {{ selectedOffer.reviewCount }} reviews
+                  </dd>
+                </div>
+                <div>
                   <dt>Arrival</dt>
                   <dd>{{ selectedOffer.arrival }}</dd>
+                </div>
+                <div>
+                  <dt>Estimated time</dt>
+                  <dd>{{ selectedOffer.duration }}</dd>
                 </div>
                 <div>
                   <dt>Deposit</dt>
@@ -837,7 +848,7 @@ onMounted(() => void loadReport());
 .selected-offer-review dl {
   display: grid;
   gap: 8px;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   margin: 0;
 }
 .selected-offer-review dl > div {

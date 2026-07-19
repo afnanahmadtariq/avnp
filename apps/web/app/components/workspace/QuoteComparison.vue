@@ -26,7 +26,7 @@ const emit = defineEmits<{
           <th scope="col">Arrival</th>
           <th scope="col">Deposit</th>
           <th scope="col">Score</th>
-          <th scope="col"><span class="sr-only">Review quote</span></th>
+          <th aria-label="Review quote" scope="col" />
         </tr>
       </thead>
       <tbody>
