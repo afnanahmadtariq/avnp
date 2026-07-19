@@ -134,7 +134,7 @@ Acceptance criteria:
 
 - The deterministic demo closes intake -> calls -> negotiation -> recommendation without external credentials.
 - The live-provider path uses ElevenLabs voice agents and preserves the same contracts.
-- Sara never invents inventory or competing bids and introduces herself as Relay's AI assistant at the start of every call.
+- Sara never invents inventory or competing bids, gives a brief automated-assistant introduction, and answers identity questions truthfully.
 - UI updates target under five seconds, at least three calls can progress concurrently, and transcript accuracy is measured toward 95%.
 
 ## Phase 7 - Production readiness and stretch work

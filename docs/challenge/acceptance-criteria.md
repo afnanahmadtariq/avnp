@@ -12,7 +12,7 @@ A submission is complete when the evidence below can be shown in one connected f
 - [ ] At least three distinct counterparties or negotiation styles take live calls.
 - [ ] Every outcome is structured and every quote itemizes fees.
 - [ ] One offer or term measurably improves because the agent uses truthful leverage gathered earlier.
-- [ ] Sara never fabricates a fact or bid and introduces herself as Relay's AI assistant at the start of every call.
+- [ ] Sara never fabricates a fact or bid, gives a brief automated-assistant introduction, and answers identity questions truthfully.
 - [ ] Interruption, refusal, callback, and “are you a robot?” handling can be demonstrated.
 - [ ] A 30%-below-market quote is visibly treated as a warning signal.
 - [ ] The final report ranks all quotes and links the reasoning to transcript and recording evidence.

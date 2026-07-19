@@ -333,8 +333,8 @@ async function downloadDataExport(): Promise<void> {
               <div>
                 <strong>AI disclosure</strong>
                 <p>
-                  Sara identifies herself as Relay’s AI assistant at the start
-                  of every call and follows jurisdiction rules.
+                  Sara gives a brief automated-assistant introduction at the
+                  start and answers identity questions plainly.
                 </p>
               </div>
               <label class="switch"

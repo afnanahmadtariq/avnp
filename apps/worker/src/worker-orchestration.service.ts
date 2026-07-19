@@ -855,7 +855,7 @@ export class WorkerOrchestrationService {
         disclosure: {
           identifyAsAiWhenAsked: true,
           recordingDisclosure:
-            "This AI-assisted call may be recorded for quote evidence.",
+            "This call may be recorded and transcribed for quote evidence.",
         },
         job: specification,
         locale: call.locale,

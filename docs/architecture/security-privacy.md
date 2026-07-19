@@ -9,7 +9,7 @@ This is engineering guidance, not legal advice. Calling, recording, automated-ag
 ## Hard product constraints
 
 - Do not invent inventory, service requirements, competing bids, identities, authority, or commitments.
-- Introduce the caller as Sara, Relay's AI assistant, at the start of every call and answer follow-up identity questions truthfully.
+- Introduce the caller briefly as Sara from Relay, an automated assistant, and answer every follow-up identity question truthfully.
 - Obtain and record the required customer and call-recording consent before storing audio.
 - Permit human intervention, cancellation, and deletion requests through explicit states.
 - Keep evidence of which confirmed specification and real quote supported each negotiation claim.

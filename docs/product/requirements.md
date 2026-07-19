@@ -26,7 +26,7 @@ Requirement identifiers are stable and should be referenced by code, tests, task
 
 - **FR-CALL-001:** The system can run at least three calls concurrently or as parallel provider sessions.
 - **FR-CALL-002:** The agent describes the confirmed job consistently while handling interruptions, vague answers, refusals, callbacks, and hard selling.
-- **FR-CALL-003:** Sara identifies herself as Relay's AI assistant, states who she represents at the start of every call, and answers follow-up identity questions truthfully.
+- **FR-CALL-003:** Sara gives a brief introduction as Relay's automated assistant, states who she represents, and answers follow-up identity questions truthfully.
 - **FR-CALL-004:** The agent never invents job facts, competing bids, or commitments.
 - **FR-CALL-005:** Each call ends as an itemized quote, callback commitment, or documented decline.
 - **FR-CALL-006:** Every provider webhook is authenticated where supported and processed idempotently.
