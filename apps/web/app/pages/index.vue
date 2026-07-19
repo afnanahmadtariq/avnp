@@ -267,6 +267,9 @@ const steps = [
         <div>
           <a href="#how-it-works">How it works</a>
           <NuxtLink to="/start">Start a brief</NuxtLink>
+          <NuxtLink to="/privacy">Privacy</NuxtLink>
+          <NuxtLink to="/terms">Terms</NuxtLink>
+          <NuxtLink to="/support">Support</NuxtLink>
         </div>
       </div>
     </footer>
@@ -782,8 +785,10 @@ const steps = [
 
 .marketing-footer__inner > div {
   display: flex;
+  flex-wrap: wrap;
   gap: 18px;
   justify-self: end;
+  justify-content: flex-end;
 }
 
 .marketing-footer a:hover {
@@ -939,6 +944,7 @@ const steps = [
   }
 
   .marketing-footer__inner > div {
+    justify-content: flex-start;
     justify-self: start;
   }
 }

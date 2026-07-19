@@ -5,20 +5,30 @@ import { isLegacyDemoRequestRoute, isPublicAppRoute } from "./auth-routes";
 describe("authentication routes", () => {
   it.each([
     "/",
+    "/privacy",
+    "/privacy/",
     "/sign-in",
     "/sign-in/sso-callback",
     "/sign-up",
     "/sign-up/continue",
+    "/support",
+    "/support/",
+    "/terms",
+    "/terms/",
   ])("allows Clerk to finish on %s", (path) => {
     expect(isPublicAppRoute(path)).toBe(true);
   });
 
-  it.each(["/dashboard", "/profile", "/requests/RLY-1/review"])(
-    "keeps %s protected",
-    (path) => {
-      expect(isPublicAppRoute(path)).toBe(false);
-    },
-  );
+  it.each([
+    "/dashboard",
+    "/privacy/archive",
+    "/profile",
+    "/requests/RLY-1/review",
+    "/support/archive",
+    "/terms/archive",
+  ])("keeps %s protected", (path) => {
+    expect(isPublicAppRoute(path)).toBe(false);
+  });
 
   it("recognizes only the retired production demo request route", () => {
     expect(isLegacyDemoRequestRoute("/requests/RLY-2048/review")).toBe(true);

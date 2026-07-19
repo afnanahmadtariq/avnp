@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { SignIn } from "@clerk/nuxt/components";
+import { ClerkLoaded, ClerkLoading, SignIn } from "@clerk/nuxt/components";
 
-useSeoMeta({ title: "Sign in · Relay" });
+useSeoMeta({
+  robots: "noindex, nofollow",
+  title: "Sign in · Relay",
+});
 
 const config = useRuntimeConfig();
 </script>
@@ -17,12 +20,38 @@ const config = useRuntimeConfig();
         <h1>Welcome back.</h1>
         <p>Sign in to manage your briefs, calls, evidence, and decisions.</p>
       </div>
-      <SignIn
+      <div
         v-if="config.public.authProvider === 'clerk'"
-        fallback-redirect-url="/dashboard"
-        sign-up-fallback-redirect-url="/profile?welcome=1"
-        sign-up-url="/sign-up"
-      />
+        class="auth-card__provider"
+      >
+        <ClerkLoading>
+          <div
+            aria-busy="true"
+            aria-live="polite"
+            class="auth-loading"
+            role="status"
+          >
+            <span aria-hidden="true" class="auth-loading__mark">R</span>
+            <div>
+              <strong>Loading secure sign-in</strong>
+              <p>Checking your account connection…</p>
+            </div>
+          </div>
+        </ClerkLoading>
+        <ClerkLoaded>
+          <SignIn
+            fallback-redirect-url="/dashboard"
+            path="/sign-in"
+            routing="path"
+            sign-up-fallback-redirect-url="/profile?welcome=1"
+            sign-up-url="/sign-up"
+          />
+        </ClerkLoaded>
+        <p class="auth-card__trust">
+          Review Relay’s <NuxtLink to="/privacy">privacy notice</NuxtLink> and
+          <NuxtLink to="/terms">product terms</NuxtLink>.
+        </p>
+      </div>
       <NuxtLink v-else class="button button--blue" to="/dashboard">
         Continue to local workspace <span aria-hidden="true">→</span>
       </NuxtLink>
@@ -63,9 +92,64 @@ const config = useRuntimeConfig();
   color: var(--relay-muted);
   line-height: 1.65;
 }
+.auth-card__provider {
+  min-width: 0;
+  width: 100%;
+}
+.auth-loading {
+  align-items: flex-start;
+  background: var(--relay-surface);
+  border: 1px solid var(--relay-line);
+  border-radius: 16px;
+  box-shadow: var(--relay-shadow-md);
+  display: flex;
+  gap: 14px;
+  min-height: 460px;
+  padding: 28px;
+  width: min(100%, 400px);
+}
+.auth-loading__mark {
+  align-items: center;
+  background: var(--relay-ink);
+  border-radius: 10px;
+  color: white;
+  display: inline-flex;
+  font-weight: 650;
+  height: 38px;
+  justify-content: center;
+  width: 38px;
+}
+.auth-loading strong {
+  display: block;
+  font-size: var(--relay-text-control);
+  margin-top: 5px;
+}
+.auth-loading p,
+.auth-card__trust {
+  color: var(--relay-faint);
+  font-size: var(--relay-text-meta);
+  line-height: var(--relay-leading-control);
+}
+.auth-loading p {
+  margin: 4px 0 0;
+}
+.auth-card__trust {
+  margin: 18px 0 0;
+  max-width: 400px;
+  text-align: center;
+}
+.auth-card__trust a {
+  color: var(--relay-ink-soft);
+  text-decoration: underline;
+  text-decoration-color: var(--relay-line-strong);
+  text-underline-offset: 3px;
+}
 @media (max-width: 760px) {
   .auth-card {
     grid-template-columns: 1fr;
+  }
+  .auth-loading {
+    min-height: 420px;
   }
 }
 </style>

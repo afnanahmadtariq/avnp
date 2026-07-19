@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { SignUp } from "@clerk/nuxt/components";
+import { ClerkLoaded, ClerkLoading, SignUp } from "@clerk/nuxt/components";
 
-useSeoMeta({ title: "Create account · Relay" });
+useSeoMeta({
+  robots: "noindex, nofollow",
+  title: "Create account · Relay",
+});
 
 const config = useRuntimeConfig();
 </script>
@@ -20,12 +23,39 @@ const config = useRuntimeConfig();
           private.
         </p>
       </div>
-      <SignUp
+      <div
         v-if="config.public.authProvider === 'clerk'"
-        fallback-redirect-url="/profile?welcome=1"
-        sign-in-fallback-redirect-url="/dashboard"
-        sign-in-url="/sign-in"
-      />
+        class="auth-card__provider"
+      >
+        <ClerkLoading>
+          <div
+            aria-busy="true"
+            aria-live="polite"
+            class="auth-loading"
+            role="status"
+          >
+            <span aria-hidden="true" class="auth-loading__mark">R</span>
+            <div>
+              <strong>Loading secure registration</strong>
+              <p>Preparing your private Relay workspace…</p>
+            </div>
+          </div>
+        </ClerkLoading>
+        <ClerkLoaded>
+          <SignUp
+            fallback-redirect-url="/profile?welcome=1"
+            path="/sign-up"
+            routing="path"
+            sign-in-fallback-redirect-url="/dashboard"
+            sign-in-url="/sign-in"
+          />
+        </ClerkLoaded>
+        <p class="auth-card__trust">
+          By creating an account, you acknowledge Relay’s
+          <NuxtLink to="/terms">product terms</NuxtLink> and
+          <NuxtLink to="/privacy">privacy notice</NuxtLink>.
+        </p>
+      </div>
       <NuxtLink v-else class="button button--blue" to="/start">
         Start in local mode <span aria-hidden="true">→</span>
       </NuxtLink>
@@ -66,9 +96,64 @@ const config = useRuntimeConfig();
   color: var(--relay-muted);
   line-height: 1.65;
 }
+.auth-card__provider {
+  min-width: 0;
+  width: 100%;
+}
+.auth-loading {
+  align-items: flex-start;
+  background: var(--relay-surface);
+  border: 1px solid var(--relay-line);
+  border-radius: 16px;
+  box-shadow: var(--relay-shadow-md);
+  display: flex;
+  gap: 14px;
+  min-height: 520px;
+  padding: 28px;
+  width: min(100%, 400px);
+}
+.auth-loading__mark {
+  align-items: center;
+  background: var(--relay-ink);
+  border-radius: 10px;
+  color: white;
+  display: inline-flex;
+  font-weight: 650;
+  height: 38px;
+  justify-content: center;
+  width: 38px;
+}
+.auth-loading strong {
+  display: block;
+  font-size: var(--relay-text-control);
+  margin-top: 5px;
+}
+.auth-loading p,
+.auth-card__trust {
+  color: var(--relay-faint);
+  font-size: var(--relay-text-meta);
+  line-height: var(--relay-leading-control);
+}
+.auth-loading p {
+  margin: 4px 0 0;
+}
+.auth-card__trust {
+  margin: 18px 0 0;
+  max-width: 400px;
+  text-align: center;
+}
+.auth-card__trust a {
+  color: var(--relay-ink-soft);
+  text-decoration: underline;
+  text-decoration-color: var(--relay-line-strong);
+  text-underline-offset: 3px;
+}
 @media (max-width: 760px) {
   .auth-card {
     grid-template-columns: 1fr;
+  }
+  .auth-loading {
+    min-height: 480px;
   }
 }
 </style>

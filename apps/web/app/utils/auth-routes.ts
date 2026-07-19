@@ -1,10 +1,16 @@
 export function isPublicAppRoute(path: string): boolean {
+  const normalizedPath =
+    path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path;
+
   return (
-    path === "/" ||
-    path === "/sign-in" ||
-    path.startsWith("/sign-in/") ||
-    path === "/sign-up" ||
-    path.startsWith("/sign-up/")
+    normalizedPath === "/" ||
+    normalizedPath === "/privacy" ||
+    normalizedPath === "/sign-in" ||
+    normalizedPath.startsWith("/sign-in/") ||
+    normalizedPath === "/sign-up" ||
+    normalizedPath.startsWith("/sign-up/") ||
+    normalizedPath === "/support" ||
+    normalizedPath === "/terms"
   );
 }
 

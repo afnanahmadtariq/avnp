@@ -84,6 +84,55 @@ export default defineNuxtConfig({
     "/": {
       prerender: true,
     },
+    "/account": {
+      headers: { "x-robots-tag": "noindex, nofollow" },
+      ssr: false,
+    },
+    "/account/**": {
+      headers: { "x-robots-tag": "noindex, nofollow" },
+      ssr: false,
+    },
+    "/dashboard": {
+      headers: { "x-robots-tag": "noindex, nofollow" },
+      ssr: false,
+    },
+    "/privacy": {
+      prerender: true,
+    },
+    "/profile": {
+      headers: { "x-robots-tag": "noindex, nofollow" },
+      ssr: false,
+    },
+    "/requests/**": {
+      headers: { "x-robots-tag": "noindex, nofollow" },
+      ssr: false,
+    },
+    "/settings": {
+      headers: { "x-robots-tag": "noindex, nofollow" },
+      ssr: false,
+    },
+    "/sign-in": {
+      headers: { "x-robots-tag": "noindex, nofollow" },
+    },
+    "/sign-in/**": {
+      headers: { "x-robots-tag": "noindex, nofollow" },
+    },
+    "/sign-up": {
+      headers: { "x-robots-tag": "noindex, nofollow" },
+    },
+    "/sign-up/**": {
+      headers: { "x-robots-tag": "noindex, nofollow" },
+    },
+    "/start": {
+      headers: { "x-robots-tag": "noindex, nofollow" },
+      ssr: false,
+    },
+    "/support": {
+      prerender: true,
+    },
+    "/terms": {
+      prerender: true,
+    },
   },
   typescript: {
     strict: true,
