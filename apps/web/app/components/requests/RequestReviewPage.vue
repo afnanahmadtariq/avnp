@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 
 import ApiFeedback from "../app/ApiFeedback.vue";
+import { useRequestWorkflow } from "../../composables/useRequestWorkflow";
 import type { JobDetail, JobSpecification } from "../../types/api";
 import { formatCurrency } from "../../utils/currency";
 import {
@@ -15,6 +16,7 @@ useSeoMeta({ title: "Review brief · Relay" });
 
 const api = useRelayApi();
 const { publicId, setCurrent } = useRequestContext();
+const { setJob: setWorkflowJob } = useRequestWorkflow();
 const editing = ref(false);
 const job = ref<JobDetail | null>(null);
 const loading = ref(true);
@@ -38,6 +40,7 @@ const form = ref({
   pickup: "",
   window: "Flexible timing",
 });
+let componentActive = true;
 
 const confirmed = computed(
   () =>
@@ -96,6 +99,7 @@ function confirmedNotes(notes?: string): string {
 
 function applyJob(detail: JobDetail): void {
   job.value = detail;
+  setWorkflowJob(detail);
   const specification: unknown = detail.draft;
 
   if (!isCompleteDraft(specification)) {
@@ -143,14 +147,17 @@ async function loadJob(): Promise<void> {
 
   try {
     await nextTick();
-    applyJob(await api.getJob(publicId.value));
+    const detail = await api.getJob(publicId.value);
+    if (!componentActive) return;
+    applyJob(detail);
   } catch (error: unknown) {
+    if (!componentActive) return;
     loadError.value =
       error instanceof Error
         ? error.message
         : "Relay could not load this moving brief.";
   } finally {
-    loading.value = false;
+    if (componentActive) loading.value = false;
   }
 }
 
@@ -196,16 +203,18 @@ async function saveChanges(): Promise<void> {
         ? { specialItems: job.value.draft.specialItems }
         : {}),
     });
+    if (!componentActive) return;
 
     applyJob(updated);
     editing.value = false;
   } catch (error: unknown) {
+    if (!componentActive) return;
     actionError.value =
       error instanceof Error
         ? error.message
         : "Relay could not save this draft.";
   } finally {
-    saving.value = false;
+    if (componentActive) saving.value = false;
   }
 }
 
@@ -224,19 +233,20 @@ async function confirmVersion(): Promise<void> {
   lastAction.value = "confirm";
 
   try {
-    applyJob(
-      await api.confirmJob(publicId.value, {
-        callingConsent: true,
-        recordingConsent: true,
-      }),
-    );
+    const detail = await api.confirmJob(publicId.value, {
+      callingConsent: true,
+      recordingConsent: true,
+    });
+    if (!componentActive) return;
+    applyJob(detail);
   } catch (error: unknown) {
+    if (!componentActive) return;
     actionError.value =
       error instanceof Error
         ? error.message
         : "Relay could not confirm this brief.";
   } finally {
-    confirming.value = false;
+    if (componentActive) confirming.value = false;
   }
 }
 
@@ -250,6 +260,10 @@ function retryAction(): void {
 }
 
 onMounted(loadJob);
+
+onBeforeUnmount(() => {
+  componentActive = false;
+});
 </script>
 
 <template>

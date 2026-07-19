@@ -24,6 +24,13 @@ vi.mock("../composables/useRelayApi", () => ({
   useRelayApi: () => api,
 }));
 
+vi.mock("../composables/useRequestWorkflow", () => ({
+  useRequestWorkflow: () => ({
+    loadJob: (publicId: string) => api.getJob(publicId),
+    setJob: vi.fn(),
+  }),
+}));
+
 const job = {
   bestOfferCents: 184_000,
   candidateCount: 3,

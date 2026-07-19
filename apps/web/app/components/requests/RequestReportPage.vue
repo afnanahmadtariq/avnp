@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import ApiFeedback from "../app/ApiFeedback.vue";
 import WorkspaceQuoteComparison from "../workspace/QuoteComparison.vue";
 import { useDecisionSelection } from "../../composables/useDecisionSelection";
 import { useRelayApi } from "../../composables/useRelayApi";
 import { useRequestContext } from "../../composables/useRequestContext";
+import { useRequestWorkflow } from "../../composables/useRequestWorkflow";
 import type { Quote } from "../../data/demo";
 import type { RankedOffer, RunReport } from "../../types/api";
 import { formatCurrency } from "../../utils/currency";
@@ -13,6 +14,7 @@ import { evidencePointLabel } from "../../utils/evidence";
 useSeoMeta({ title: "Final report · Relay" });
 
 const { publicId, runId, setCurrent } = useRequestContext();
+const { setJob: setWorkflowJob } = useRequestWorkflow();
 const {
   decisionSaved,
   markDecisionSaved,
@@ -24,6 +26,7 @@ const apiError = ref("");
 const apiPending = ref(true);
 const decisionPending = ref(false);
 const apiReport = ref<RunReport>();
+let reportLoadSequence = 0;
 
 interface ReportQuote extends Quote {
   rank: number;
@@ -218,14 +221,19 @@ const reportExport = computed(() => ({
 }));
 
 async function loadReport(): Promise<void> {
+  const sequence = ++reportLoadSequence;
+  const requestId = publicId.value;
+  const requestedRunId = runId.value;
   apiPending.value = true;
   apiError.value = "";
   apiReport.value = undefined;
 
   try {
     const api = useRelayApi();
-    const job = await api.getJob(publicId.value);
-    const resolvedRunId = runId.value ?? job.latestRunId;
+    const job = await api.getJob(requestId);
+    if (sequence !== reportLoadSequence) return;
+    setWorkflowJob(job);
+    const resolvedRunId = requestedRunId ?? job.latestRunId;
 
     if (!resolvedRunId) {
       apiError.value = "This request does not have a completed report yet.";
@@ -236,6 +244,7 @@ async function loadReport(): Promise<void> {
       api.getRun(resolvedRunId),
       api.getReport(resolvedRunId),
     ]);
+    if (sequence !== reportLoadSequence) return;
 
     if (loadedRun.jobPublicId !== job.publicId) {
       throw new Error(
@@ -251,12 +260,13 @@ async function loadReport(): Promise<void> {
     }
     setCurrent(job.publicId, resolvedRunId);
   } catch (error: unknown) {
+    if (sequence !== reportLoadSequence) return;
     apiError.value =
       error instanceof Error
         ? error.message
         : "Relay could not load the final report.";
   } finally {
-    apiPending.value = false;
+    if (sequence === reportLoadSequence) apiPending.value = false;
   }
 }
 
@@ -304,6 +314,10 @@ function exportReport(): void {
 }
 
 onMounted(() => void loadReport());
+
+onBeforeUnmount(() => {
+  reportLoadSequence += 1;
+});
 </script>
 
 <template>

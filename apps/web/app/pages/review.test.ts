@@ -4,6 +4,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import ReviewPage from "../components/requests/RequestReviewPage.vue";
 
+vi.mock("../composables/useRequestWorkflow", () => ({
+  useRequestWorkflow: () => ({ setJob: vi.fn() }),
+}));
+
 afterEach(() => {
   vi.clearAllMocks();
   vi.unstubAllGlobals();

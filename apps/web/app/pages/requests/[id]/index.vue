@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import type { JobDetail } from "~/types/api";
-
-import { onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 
 import { RelayApiError, useRelayApi } from "../../../composables/useRelayApi";
+import { requestDestination } from "../../../utils/request-navigation";
 
 useSeoMeta({ title: "Opening request · Relay" });
 
@@ -13,28 +12,21 @@ const { setCurrent } = useCurrentRequest();
 const pending = ref(true);
 const loadError = ref("");
 const notFound = ref(false);
+let loadSequence = 0;
 
-function destination(job: JobDetail): string {
-  const base = `/requests/${encodeURIComponent(job.publicId)}`;
-
-  if (job.nextAction === "review_and_confirm") return `${base}/review`;
-  if (["approve_and_start", "discover_businesses"].includes(job.nextAction)) {
-    return `${base}/businesses`;
-  }
-  if (job.nextAction === "review_report") return `${base}/report`;
-  if (job.nextAction === "start_over") return "/start";
-  return `${base}/workspace`;
-}
+const routeId = computed(() => {
+  const value = route.params.id;
+  return Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
+});
 
 async function openRequest(): Promise<void> {
+  const sequence = ++loadSequence;
   pending.value = true;
   loadError.value = "";
   notFound.value = false;
-  const routeId = Array.isArray(route.params.id)
-    ? route.params.id[0]
-    : route.params.id;
+  const requestId = routeId.value;
 
-  if (!routeId) {
+  if (!requestId) {
     notFound.value = true;
     loadError.value = "This request link is incomplete.";
     pending.value = false;
@@ -42,23 +34,28 @@ async function openRequest(): Promise<void> {
   }
 
   try {
-    const job = await api.getJob(routeId);
+    const job = await api.getJob(requestId);
+    if (sequence !== loadSequence) return;
+
     setCurrent(job.publicId, job.latestRunId ?? undefined);
-    await navigateTo(destination(job), { replace: true });
+    await navigateTo(requestDestination(job), { replace: true });
   } catch (error: unknown) {
+    if (sequence !== loadSequence) return;
     notFound.value = error instanceof RelayApiError && error.statusCode === 404;
     loadError.value = notFound.value
-      ? `Request ${routeId} was not found in your account.`
+      ? `Request ${requestId} was not found in your account.`
       : error instanceof Error
         ? error.message
         : "Relay could not open this request.";
   } finally {
-    pending.value = false;
+    if (sequence === loadSequence) pending.value = false;
   }
 }
 
-onMounted(() => {
-  void openRequest();
+watch(routeId, () => void openRequest(), { immediate: true });
+
+onBeforeUnmount(() => {
+  loadSequence += 1;
 });
 </script>
 

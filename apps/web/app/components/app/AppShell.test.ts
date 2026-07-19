@@ -31,7 +31,7 @@ vi.mock("../../composables/useAccountIdentity", () => ({
   useAccountIdentity: () => account,
 }));
 
-const api = { getProfile: vi.fn() };
+const api = { getJob: vi.fn(), getProfile: vi.fn() };
 const clearCurrent = vi.fn();
 const publicId = ref("");
 const runId = ref<string>();
@@ -48,6 +48,11 @@ beforeEach(() => {
   window.localStorage.clear();
   window.localStorage.setItem("relay-account-owner", "user-a");
   api.getProfile.mockResolvedValue({ displayName: "Ada Relay" });
+  api.getJob.mockResolvedValue({
+    latestRunId: "run-1",
+    nextAction: "follow_run",
+    publicId: "RLY-2048",
+  });
   vi.stubGlobal("useRoute", () => route);
   vi.stubGlobal("useRuntimeConfig", () => ({
     public: { authProvider: "clerk" },
@@ -125,6 +130,45 @@ describe("AppShell navigation", () => {
       .findAll(".app-nav-link")
       .find((link) => link.text().includes("Brief"));
     expect(briefLink?.classes()).toContain("app-nav-link--mobile-parent");
+    const callsLink = wrapper
+      .findAll(".app-nav-link")
+      .find((link) => link.text().includes("Calls"));
+    const reportLink = wrapper
+      .findAll(".app-nav-link")
+      .find((link) => link.text().includes("Report"));
+    expect(callsLink?.attributes("aria-disabled")).toBeUndefined();
+    expect(reportLink?.attributes("aria-disabled")).toBe("true");
+    wrapper.unmount();
+  });
+
+  it("disables request stages that would fail before the brief is confirmed", async () => {
+    publicId.value = "RLY-DRAFT";
+    api.getJob.mockResolvedValueOnce({
+      latestRunId: null,
+      nextAction: "review_and_confirm",
+      publicId: "RLY-DRAFT",
+    });
+    const wrapper = mountShell();
+    await flushPromises();
+
+    const requestLinks = wrapper
+      .findAll(".nav-group")
+      .find((group) => group.text().includes("Current request"))
+      ?.findAll(".app-nav-link");
+    const brief = requestLinks?.find((item) => item.text().includes("Brief"));
+    const businesses = requestLinks?.find((item) =>
+      item.text().includes("Businesses"),
+    );
+    const calls = requestLinks?.find((item) => item.text().includes("Calls"));
+    const report = requestLinks?.find((item) => item.text().includes("Report"));
+
+    expect(brief?.attributes("aria-disabled")).toBeUndefined();
+    expect(businesses?.attributes("aria-disabled")).toBe("true");
+    expect(calls?.attributes("aria-disabled")).toBe("true");
+    expect(report?.attributes("aria-disabled")).toBe("true");
+    expect(businesses?.attributes("title")).toBe(
+      "Review brief is the next step.",
+    );
     wrapper.unmount();
   });
 

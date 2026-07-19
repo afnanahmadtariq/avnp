@@ -4,6 +4,7 @@ import { computed, onMounted, ref } from "vue";
 import ApiFeedback from "../components/app/ApiFeedback.vue";
 import type { JobSummary } from "../types/api";
 import { formatCurrency } from "../utils/currency";
+import { requestDestination } from "../utils/request-navigation";
 
 useSeoMeta({ title: "Dashboard · Relay" });
 
@@ -82,21 +83,6 @@ function nextActionCopy(job: JobSummary): string {
   };
 
   return copy[job.nextAction] ?? "Open this request to continue.";
-}
-
-function jobRoute(job: JobSummary): string {
-  const base = `/requests/${encodeURIComponent(job.publicId)}`;
-
-  if (job.nextAction === "review_and_confirm") return `${base}/review`;
-  if (
-    ["approve_and_start", "discover_businesses", "start_over"].includes(
-      job.nextAction,
-    )
-  ) {
-    return `${base}/businesses`;
-  }
-  if (job.nextAction === "review_report") return `${base}/report`;
-  return `${base}/workspace`;
 }
 
 function formattedDate(value: string | null): string {
@@ -261,7 +247,7 @@ onMounted(loadJobs);
             <NuxtLink
               :aria-label="`Open ${job.title}`"
               class="request-card__open"
-              :to="jobRoute(job)"
+              :to="requestDestination(job)"
               @click="selectJob(job)"
               >Open <span aria-hidden="true">→</span></NuxtLink
             >

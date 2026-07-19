@@ -23,6 +23,10 @@ vi.mock("../composables/useRequestContext", () => ({
   }),
 }));
 
+vi.mock("../composables/useRequestWorkflow", () => ({
+  useRequestWorkflow: () => ({ setJob: vi.fn() }),
+}));
+
 const rankedOffers = [
   {
     businessId: "pine",

@@ -23,6 +23,7 @@ const discoveryMode = ref("");
 const discoveryStatus = ref("");
 let discoveryPollTimer: number | undefined;
 let discoveryPollPending = false;
+let componentActive = true;
 
 interface CandidateResponse {
   items: CandidateBusiness[];
@@ -179,6 +180,7 @@ async function pollDiscovery(): Promise<void> {
   discoveryPollPending = true;
   try {
     const response = await api.getCandidates(publicId.value);
+    if (!componentActive) return;
     applyDiscoveryMetadata(response);
     applyCandidates(response.items);
 
@@ -188,13 +190,14 @@ async function pollDiscovery(): Promise<void> {
       scheduleDiscoveryPoll();
     }
   } catch (error: unknown) {
+    if (!componentActive) return;
     loadError.value =
       error instanceof Error
         ? error.message
         : "Live discovery updates were interrupted. Retry to refresh the current results.";
     scheduleDiscoveryPoll();
   } finally {
-    discoveryPollPending = false;
+    if (componentActive) discoveryPollPending = false;
   }
 }
 
@@ -214,12 +217,14 @@ async function loadBusinesses(forceDiscovery = false): Promise<void> {
   try {
     await nextTick();
     let response: CandidateResponse = await api.getCandidates(publicId.value);
+    if (!componentActive) return;
     applyDiscoveryMetadata(response);
 
     if (forceDiscovery || response.items.length === 0) {
       discovering.value = true;
       if (forceDiscovery || response.status?.toLowerCase() !== "discovering") {
         response = await api.discoverBusinesses(publicId.value);
+        if (!componentActive) return;
         applyDiscoveryMetadata(response);
       }
     }
@@ -230,13 +235,14 @@ async function loadBusinesses(forceDiscovery = false): Promise<void> {
       else scheduleDiscoveryPoll();
     }
   } catch (error: unknown) {
+    if (!componentActive) return;
     finishDiscovery();
     loadError.value =
       error instanceof Error
         ? error.message
         : "Relay could not load matched businesses.";
   } finally {
-    loading.value = false;
+    if (componentActive) loading.value = false;
   }
 }
 
@@ -282,6 +288,7 @@ async function startCalls(): Promise<void> {
       )
       .map((business) => business.id);
     const run = await api.startRun(publicId.value, selectedIds);
+    if (!componentActive) return;
 
     persistSelection();
     setCurrent(publicId.value, run.id);
@@ -290,12 +297,13 @@ async function startCalls(): Promise<void> {
       query: { run: run.id },
     });
   } catch (error: unknown) {
+    if (!componentActive) return;
     startError.value =
       error instanceof Error
         ? error.message
         : "Relay could not start these calls.";
   } finally {
-    starting.value = false;
+    if (componentActive) starting.value = false;
   }
 }
 
@@ -305,6 +313,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  componentActive = false;
   clearDiscoveryTimer();
   document.removeEventListener("visibilitychange", handleVisibilityChange);
 });

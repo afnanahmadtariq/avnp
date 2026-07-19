@@ -4,6 +4,13 @@ import { UserButton } from "@clerk/nuxt/components";
 import { useAuth } from "@clerk/nuxt/composables";
 
 import { useAccountIdentity } from "../../composables/useAccountIdentity";
+import { useRequestWorkflow } from "../../composables/useRequestWorkflow";
+import {
+  isRequestStageAvailable,
+  requestNextStage,
+  requestStageLabel,
+  type RequestStage,
+} from "../../utils/request-navigation";
 
 const route = useRoute();
 const runtimeConfig = useRuntimeConfig();
@@ -14,6 +21,7 @@ const clerkAuth = clerkEnabled.value ? useAuth() : undefined;
 const api = useRelayApi();
 const { publicId, runId } = useRequestContext();
 const { clearCurrent } = useCurrentRequest();
+const { job: requestJob, loadJob: loadRequestJob } = useRequestWorkflow();
 const hasCurrentRequest = computed(() => publicId.value.length > 0);
 const {
   displayName,
@@ -26,8 +34,11 @@ const activeAccountId = useState("relay-active-account-id", () => "");
 const accountOwnerStorageKey = "relay-account-owner";
 
 interface NavItem {
+  disabled?: boolean;
+  disabledReason?: string;
   label: string;
   mobileLabel?: string;
+  stage?: RequestStage;
   to: string;
   icon:
     | "home"
@@ -49,26 +60,70 @@ const workspaceItems: NavItem[] = [
 const requestBase = computed(
   () => `/requests/${encodeURIComponent(publicId.value)}`,
 );
+const resolvedRunId = computed(
+  () =>
+    runId.value ??
+    (requestJob.value?.publicId === publicId.value
+      ? (requestJob.value.latestRunId ?? undefined)
+      : undefined),
+);
 
 const workspaceRoute = computed(() => ({
   path: `${requestBase.value}/workspace`,
-  ...(runId.value ? { query: { run: runId.value } } : {}),
+  ...(resolvedRunId.value ? { query: { run: resolvedRunId.value } } : {}),
 }));
 
-const requestItems = computed<NavItem[]>(() => [
-  { label: "Brief", to: `${requestBase.value}/review`, icon: "brief" },
-  {
-    label: "Businesses",
-    to: `${requestBase.value}/businesses`,
-    icon: "business",
-  },
-  {
-    label: "Calls",
-    to: workspaceRoute.value.path,
-    icon: "call",
-  },
-  { label: "Report", to: `${requestBase.value}/report`, icon: "report" },
-]);
+const requestItems = computed<NavItem[]>(() => {
+  const items: NavItem[] = [
+    {
+      icon: "brief",
+      label: "Brief",
+      stage: "review",
+      to: `${requestBase.value}/review`,
+    },
+    {
+      icon: "business",
+      label: "Businesses",
+      stage: "businesses",
+      to: `${requestBase.value}/businesses`,
+    },
+    {
+      icon: "call",
+      label: "Calls",
+      stage: "workspace",
+      to: workspaceRoute.value.path,
+    },
+    {
+      icon: "report",
+      label: "Report",
+      stage: "report",
+      to: `${requestBase.value}/report`,
+    },
+  ];
+
+  return items.map((item) => {
+    const currentJob =
+      requestJob.value?.publicId === publicId.value ? requestJob.value : null;
+    const disabled = Boolean(
+      item.stage &&
+      item.stage !== "review" &&
+      (!currentJob || !isRequestStageAvailable(currentJob, item.stage)),
+    );
+    const nextStage = currentJob ? requestNextStage(currentJob) : "review";
+
+    return {
+      ...item,
+      disabled,
+      ...(disabled
+        ? {
+            disabledReason: currentJob
+              ? `${requestStageLabel(nextStage)} is the next step.`
+              : "Checking this request's saved progress.",
+          }
+        : {}),
+    };
+  });
+});
 
 const accountItems = computed<NavItem[]>(() => [
   { label: "Profile", to: "/profile", icon: "profile" },
@@ -102,6 +157,14 @@ function isMobileParent(item: NavItem): boolean {
 
 function itemTarget(item: NavItem) {
   return item.icon === "call" ? workspaceRoute.value : item.to;
+}
+
+function requestItemTarget(item: NavItem) {
+  return item.disabled ? route.fullPath || route.path : itemTarget(item);
+}
+
+function handleRequestNavigation(event: MouseEvent, item: NavItem): void {
+  if (item.disabled) event.preventDefault();
 }
 
 function isMobileHidden(item: NavItem): boolean {
@@ -146,6 +209,15 @@ async function synchronizeAccountOwner(): Promise<void> {
 
   if (nextAccountId) await loadAccountIdentity(true);
 }
+
+watch(
+  publicId,
+  (nextPublicId) => {
+    if (!nextPublicId || requestJob.value?.publicId === nextPublicId) return;
+    void loadRequestJob(nextPublicId).catch(() => undefined);
+  },
+  { immediate: true },
+);
 
 if (clerkAuth) {
   watch(
@@ -230,13 +302,18 @@ onMounted(async () => {
           <NuxtLink
             v-for="item in requestItems"
             :key="item.to"
+            :aria-disabled="item.disabled || undefined"
             class="app-nav-link"
             :class="{
               'app-nav-link--active': isActive(item),
+              'app-nav-link--disabled': item.disabled,
               'app-nav-link--mobile-hidden': isMobileHidden(item),
               'app-nav-link--mobile-parent': isMobileParent(item),
             }"
-            :to="itemTarget(item)"
+            :tabindex="item.disabled ? -1 : undefined"
+            :title="item.disabledReason"
+            :to="requestItemTarget(item)"
+            @click="handleRequestNavigation($event, item)"
           >
             <span aria-hidden="true" class="app-nav-icon">
               <svg v-if="item.icon === 'brief'" viewBox="0 0 20 20">
@@ -428,6 +505,7 @@ onMounted(async () => {
 }
 .app-nav-link {
   align-items: center;
+  border: 0;
   border-radius: 9px;
   color: var(--relay-muted);
   display: grid;
@@ -437,9 +515,11 @@ onMounted(async () => {
   grid-template-columns: 19px 1fr auto;
   min-height: 39px;
   padding: 0 10px;
+  text-align: left;
   transition:
     background 0.15s ease,
     color 0.15s ease;
+  width: 100%;
 }
 .app-nav-link:hover {
   background: #f6f7f9;
@@ -449,6 +529,13 @@ onMounted(async () => {
   background: var(--relay-blue-soft);
   color: var(--relay-blue);
   font-weight: 620;
+}
+.app-nav-link--disabled,
+.app-nav-link--disabled:hover {
+  background: transparent;
+  color: var(--relay-faint);
+  cursor: not-allowed;
+  opacity: 0.58;
 }
 .app-nav-icon {
   display: block;

@@ -6,6 +6,7 @@ import WorkspaceQuoteComparison from "../workspace/QuoteComparison.vue";
 import { useRelayApi } from "../../composables/useRelayApi";
 import { useRequestContext } from "../../composables/useRequestContext";
 import { useDecisionSelection } from "../../composables/useDecisionSelection";
+import { useRequestWorkflow } from "../../composables/useRequestWorkflow";
 import type { Negotiation, NegotiationTone, Quote } from "../../data/demo";
 import type {
   JobDetail,
@@ -25,6 +26,8 @@ useSeoMeta({
 });
 
 const { publicId, runId, setCurrent } = useRequestContext();
+const { loadJob: loadWorkflowJob, setJob: setWorkflowJob } =
+  useRequestWorkflow();
 const activeNegotiationId = ref("");
 const callsPaused = ref(false);
 const apiError = ref("");
@@ -41,6 +44,7 @@ const { decisionSaved, markDecisionSaved, selectedQuoteId, selectQuote } =
 let pollTimer: number | undefined;
 let pollPending = false;
 let workspaceLoadToken = 0;
+let componentActive = true;
 
 interface WorkspaceNegotiation extends Negotiation {
   hasOffer: boolean;
@@ -465,6 +469,7 @@ async function loadWorkspace(silent = false): Promise<void> {
     if (!resolvedRunId) {
       if (loadToken !== workspaceLoadToken) return;
       job.value = loadedJob;
+      setWorkflowJob(loadedJob);
       apiError.value = "This request does not have a negotiation run yet.";
       return;
     }
@@ -483,6 +488,7 @@ async function loadWorkspace(silent = false): Promise<void> {
     if (loadToken !== workspaceLoadToken) return;
 
     job.value = loadedJob;
+    setWorkflowJob(loadedJob);
     run.value = loadedRun;
     runEvents.value = loadedEvents.items;
     callsPaused.value = loadedRun.paused;
@@ -523,16 +529,18 @@ async function toggleCalls(): Promise<void> {
       run.value.id,
       nextPaused ? "pause" : "resume",
     );
+    if (!componentActive) return;
     run.value = updated;
     callsPaused.value = updated.paused;
   } catch (error: unknown) {
+    if (!componentActive) return;
     callsPaused.value = previousPaused;
     apiError.value =
       error instanceof Error
         ? error.message
         : "Relay could not update the run.";
   } finally {
-    controlPending.value = false;
+    if (componentActive) controlPending.value = false;
   }
 }
 
@@ -544,17 +552,20 @@ async function cancelRun(): Promise<void> {
   apiError.value = "";
   try {
     const updated = await useRelayApi().updateRun(run.value.id, "cancel");
+    if (!componentActive) return;
     run.value = updated;
     callsPaused.value = updated.paused;
     cancelArmed.value = false;
     clearWorkspacePoll();
+    await loadWorkflowJob(publicId.value, { force: true });
   } catch (error: unknown) {
+    if (!componentActive) return;
     apiError.value =
       error instanceof Error
         ? error.message
         : "Relay could not cancel the run.";
   } finally {
-    controlPending.value = false;
+    if (componentActive) controlPending.value = false;
   }
 }
 
@@ -565,14 +576,16 @@ async function saveSelectedDecision(): Promise<void> {
   apiError.value = "";
   try {
     await useRelayApi().saveDecision(run.value.id, selectedQuote.value.id);
+    if (!componentActive) return;
     markDecisionSaved(selectedQuote.value.id);
   } catch (error: unknown) {
+    if (!componentActive) return;
     apiError.value =
       error instanceof Error
         ? error.message
         : "Relay could not save the decision.";
   } finally {
-    decisionPending.value = false;
+    if (componentActive) decisionPending.value = false;
   }
 }
 
@@ -610,6 +623,8 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  componentActive = false;
+  workspaceLoadToken += 1;
   clearWorkspacePoll();
   document.removeEventListener("visibilitychange", handleVisibilityChange);
 });
