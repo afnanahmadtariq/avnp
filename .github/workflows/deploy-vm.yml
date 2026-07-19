@@ -36,6 +36,13 @@ jobs:
         with:
           ref: ${{ env.RELEASE_SHA }}
 
+      # The default Docker driver cannot export the GitHub Actions cache. Use
+      # BuildKit in a managed container so cache-from/cache-to type=gha work.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+        with:
+          driver: docker-container
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@65b78e6e13532edd9afa3aa52ac7964289d1a9c1 # v4.0.0
         with:
