@@ -4,23 +4,33 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
-  Logger,
   NotFoundException,
-  type OnApplicationBootstrap,
 } from "@nestjs/common";
 import {
   jobSpecificationSchema,
   type Business,
+  type NegotiationStrategy,
   type Quote,
 } from "@relay/contracts";
 import type { DatabaseClient, Prisma } from "@relay/database";
 import { rankQuotes } from "@relay/domain";
+import type { JobSpecificationExtraction } from "@relay/integrations";
+import {
+  createQueueJob,
+  type QueueJobEnvelope,
+  type QueueJobName,
+} from "@relay/queue";
 
+// Nest constructor dependencies must remain runtime imports for emitted metadata.
+// eslint-disable-next-line @typescript-eslint/consistent-type-imports
+import { CurrentIdentityService } from "../auth/current-identity.service.js";
 // Nest constructor dependencies must remain runtime imports for emitted metadata.
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { RuntimeConfigService } from "../config/runtime-config.service.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { PrismaService } from "../database/prisma.service.js";
+// eslint-disable-next-line @typescript-eslint/consistent-type-imports
+import { OutboxDispatcherService } from "../queue/outbox-dispatcher.service.js";
 import {
   DEMO_JOB_ID,
   DEMO_JOB_PUBLIC_ID,
@@ -52,6 +62,7 @@ const jobInclude = {
     include: { business: true },
     orderBy: { discoveryRank: "asc" },
   },
+  evidence: { orderBy: { createdAt: "desc" }, take: 20 },
   runs: {
     include: {
       decision: true,
@@ -97,6 +108,14 @@ const terminalRunStatuses = new Set<string>([
   "FAILED",
   "PARTIALLY_COMPLETED",
 ]);
+const liveProfileDefaults = {
+  displayName: "",
+  email: "",
+  location: "",
+  phone: "",
+  representedAs: "",
+  timezone: "America/New_York",
+} as const;
 
 function toJson(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
@@ -356,34 +375,21 @@ function toContractQuote(quote: RunQuoteRecord): Quote {
 }
 
 @Injectable()
-export class ProductService implements OnApplicationBootstrap {
-  private readonly logger = new Logger(ProductService.name);
-
+export class ProductService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly runtimeConfig: RuntimeConfigService,
+    private readonly currentIdentity: CurrentIdentityService,
+    private readonly outbox: OutboxDispatcherService,
   ) {}
 
   private get database(): DatabaseClient {
     return this.prisma.client;
   }
 
-  async onApplicationBootstrap(): Promise<void> {
-    if (!this.prisma.configured || this.runtimeConfig.value.mode === "live") {
-      return;
-    }
-
-    try {
-      await this.seedDeterministicFixtures();
-      this.logger.log("Deterministic Relay fixture market is ready");
-    } catch (error: unknown) {
-      const detail = error instanceof Error ? error.message : String(error);
-      this.logger.warn(`Fixture seed skipped: ${detail}`);
-    }
-  }
-
-  async listJobs(): Promise<{ items: unknown[]; mode: "fixture" }> {
-    const user = await this.ensureDemoUser();
+  async listJobs(): Promise<{ items: unknown[]; mode: "fixture" | "live" }> {
+    const user = await this.ensureCurrentUser();
+    await this.ensureLocalFixture(user.id);
     const jobs = await this.database.job.findMany({
       include: jobInclude,
       orderBy: { updatedAt: "desc" },
@@ -392,12 +398,12 @@ export class ProductService implements OnApplicationBootstrap {
 
     return {
       items: jobs.map((job) => this.presentJobSummary(job)),
-      mode: "fixture",
+      mode: this.runtimeConfig.value.mode,
     };
   }
 
   async createJob(dto: CreateJobDto): Promise<unknown> {
-    const user = await this.ensureDemoUser();
+    const user = await this.ensureCurrentUser();
     const specification = dto.specification ?? { vertical: "moving" };
     const job = await this.database.job.create({
       data: {
@@ -495,8 +501,13 @@ export class ProductService implements OnApplicationBootstrap {
               calling: dto.callingConsent,
               recording: dto.recordingConsent,
             },
-            fixtureMode: true,
+            mode: this.runtimeConfig.value.mode,
             source: "guided_form",
+            evidence: job.evidence.map((item) => ({
+              id: item.id,
+              kind: statusName(item.kind),
+              provider: item.provider,
+            })),
           }),
           specification: toJson(parsed.data),
           version: nextVersion,
@@ -519,7 +530,46 @@ export class ProductService implements OnApplicationBootstrap {
 
   async discoverBusinesses(publicId: string): Promise<unknown> {
     const job = await this.findOwnedJob(publicId);
-    this.requireConfirmedVersion(job);
+    const version = this.requireConfirmedVersion(job);
+
+    if (this.runtimeConfig.value.mode === "live") {
+      if (job.status === "DISCOVERING") return this.getCandidates(publicId);
+      if (job.candidates.length > 0) return this.getCandidates(publicId);
+
+      const traceId = randomUUID();
+      const envelope = createQueueJob(
+        "business.discover",
+        {
+          jobId: job.id,
+          limit: 12,
+          searchRadiusKm: 40,
+          specificationVersionId: version.id,
+        },
+        {
+          idempotencyKey: `job:${job.id}:discovery:${version.id}`,
+          traceId,
+        },
+      );
+      await this.database.$transaction(async (transaction) => {
+        await transaction.job.update({
+          data: { status: "DISCOVERING" },
+          where: { id: job.id },
+        });
+        await this.createOutboxEvent(transaction, job.id, "Job", envelope);
+        await transaction.auditEvent.create({
+          data: {
+            actor: "API",
+            eventType: "business.discovery.requested",
+            jobId: job.id,
+            occurredAt: new Date(),
+            payload: toJson({ limit: 12, searchRadiusKm: 40 }),
+            traceId,
+          },
+        });
+      });
+      await this.outbox.publishPending(job.id);
+      return this.getCandidates(publicId);
+    }
 
     await this.database.job.update({
       data: { status: "DISCOVERING" },
@@ -544,8 +594,14 @@ export class ProductService implements OnApplicationBootstrap {
     return {
       items: job.candidates.map((candidate) => {
         const verification = asRecord(candidate.business.verification);
+        const distanceMiles =
+          typeof verification.distanceMiles === "number"
+            ? verification.distanceMiles
+            : typeof verification.distanceMeters === "number"
+              ? verification.distanceMeters / 1_609.344
+              : 0;
         return {
-          distanceMiles: Number(verification.distanceMiles ?? 0),
+          distanceMiles: Number(distanceMiles.toFixed(1)),
           id: candidate.business.id,
           location:
             asString(asRecord(candidate.business.address).formattedAddress) ??
@@ -558,12 +614,13 @@ export class ProductService implements OnApplicationBootstrap {
               : Number(candidate.business.rating),
           reviewCount: candidate.business.reviewCount,
           selected: candidate.status === "SHORTLISTED",
-          source: FIXTURE_PROVIDER,
+          source: candidate.business.provider,
           status: statusName(candidate.status),
         };
       }),
       jobPublicId: job.publicId,
-      mode: "fixture",
+      mode: this.runtimeConfig.value.mode,
+      status: statusName(job.status),
     };
   }
 
@@ -571,6 +628,17 @@ export class ProductService implements OnApplicationBootstrap {
     const job = await this.findOwnedJob(publicId);
     const version = this.requireConfirmedVersion(job);
     const consent = consentFromVersion(version);
+
+    const activeRun = job.runs.find((candidate) =>
+      activeRunStatuses.includes(
+        candidate.status as (typeof activeRunStatuses)[number],
+      ),
+    );
+    if (activeRun) {
+      throw new ConflictException(
+        `Negotiation run ${activeRun.id} is already active for this request.`,
+      );
+    }
 
     if (!consent.calling || !consent.recording) {
       throw new ConflictException(
@@ -598,12 +666,24 @@ export class ProductService implements OnApplicationBootstrap {
       where: { businessId: { in: selectedIds }, jobId: job.id },
     });
 
-    const run = await this.createFixtureRun(
-      job.id,
-      version.id,
-      selectedCandidates.map((candidate) => candidate.businessId),
-      `fixture-${job.publicId}-${version.version}-${randomUUID()}`,
+    const businessIds = selectedCandidates.map(
+      (candidate) => candidate.businessId,
     );
+    const correlationId = `${this.runtimeConfig.value.mode}-${job.publicId}-${version.version}-${randomUUID()}`;
+    const run =
+      this.runtimeConfig.value.mode === "fixture"
+        ? await this.createFixtureRun(
+            job.id,
+            version.id,
+            businessIds,
+            correlationId,
+          )
+        : await this.createLiveRun(
+            job.id,
+            version.id,
+            businessIds,
+            correlationId,
+          );
 
     return this.getRun(run.id);
   }
@@ -671,11 +751,57 @@ export class ProductService implements OnApplicationBootstrap {
       );
     }
 
-    await this.database.negotiationRun.update({
-      data: { pauseReason: null, pausedAt: null, status: "CALLING" },
-      where: { id: run.id },
-    });
-    await this.appendRunEvent(run.id, "run.resumed", "USER", {});
+    if (this.runtimeConfig.value.mode === "live") {
+      const traceId = randomUUID();
+      await this.database.$transaction(async (transaction) => {
+        await transaction.negotiationRun.update({
+          data: { pauseReason: null, pausedAt: null, status: "CALLING" },
+          where: { id: run.id },
+        });
+
+        for (const call of run.calls) {
+          if (call.status !== "QUEUED" || call.providerCallId !== null)
+            continue;
+          const negotiation = await transaction.negotiation.findUnique({
+            where: { id: call.negotiationId ?? "" },
+          });
+          if (!negotiation) continue;
+          const nextAttempt = call.attempt + 1;
+          await transaction.call.update({
+            data: { attempt: nextAttempt },
+            where: { id: call.id },
+          });
+          const envelope = createQueueJob(
+            "call.place",
+            {
+              businessId: call.businessId,
+              callId: call.id,
+              runId: run.id,
+              specificationVersionId: run.specificationVersionId,
+              strategy: statusName(negotiation.strategy) as NegotiationStrategy,
+            },
+            {
+              idempotencyKey: `run:${run.id}:call:${call.id}:resume:${nextAttempt}`,
+              traceId,
+            },
+          );
+          await this.createOutboxEvent(
+            transaction,
+            run.id,
+            "NegotiationRun",
+            envelope,
+          );
+        }
+      });
+      await this.appendRunEvent(run.id, "run.resumed", "USER", {});
+      await this.outbox.publishPending(run.id);
+    } else {
+      await this.database.negotiationRun.update({
+        data: { pauseReason: null, pausedAt: null, status: "CALLING" },
+        where: { id: run.id },
+      });
+      await this.appendRunEvent(run.id, "run.resumed", "USER", {});
+    }
     return this.getRun(run.id);
   }
 
@@ -689,22 +815,53 @@ export class ProductService implements OnApplicationBootstrap {
     }
 
     const cancelledAt = new Date();
-    await this.database.negotiationRun.update({
-      data: { cancelledAt, status: "CANCELLED" },
-      where: { id: run.id },
-    });
-    await this.database.call.updateMany({
-      data: { endedAt: cancelledAt, status: "CANCELLED" },
-      where: {
-        runId: run.id,
-        status: { in: ["DIALING", "IN_PROGRESS", "NEGOTIATING", "QUEUED"] },
-      },
-    });
-    await this.database.job.update({
-      data: { status: "CANCELLED" },
-      where: { id: run.jobId },
+    const traceId = randomUUID();
+    await this.database.$transaction(async (transaction) => {
+      await transaction.negotiationRun.update({
+        data: { cancelledAt, status: "CANCELLED" },
+        where: { id: run.id },
+      });
+      await transaction.call.updateMany({
+        data: { endedAt: cancelledAt, status: "CANCELLED" },
+        where: {
+          runId: run.id,
+          status: {
+            in: ["DIALING", "IN_PROGRESS", "NEGOTIATING", "QUEUED"],
+          },
+        },
+      });
+      await transaction.job.update({
+        data: { status: "CANCELLED" },
+        where: { id: run.jobId },
+      });
+
+      if (this.runtimeConfig.value.mode === "live") {
+        for (const call of run.calls) {
+          if (
+            call.providerCallId === null ||
+            !["DIALING", "IN_PROGRESS", "NEGOTIATING"].includes(call.status)
+          ) {
+            continue;
+          }
+          const envelope = createQueueJob(
+            "call.cancel",
+            { callId: call.id, runId: run.id },
+            {
+              idempotencyKey: `run:${run.id}:call:${call.id}:cancel`,
+              traceId,
+            },
+          );
+          await this.createOutboxEvent(
+            transaction,
+            run.id,
+            "NegotiationRun",
+            envelope,
+          );
+        }
+      }
     });
     await this.appendRunEvent(run.id, "run.cancelled", "USER", {});
+    await this.outbox.publishPending(run.id);
     return this.getRun(run.id);
   }
 
@@ -763,7 +920,7 @@ export class ProductService implements OnApplicationBootstrap {
 
     return {
       decidedAt: decision.decidedAt.toISOString(),
-      mode: "fixture",
+      mode: this.runtimeConfig.value.mode,
       quoteId: quote.id,
       recommendation: report.recommendation,
       saved: true,
@@ -772,15 +929,19 @@ export class ProductService implements OnApplicationBootstrap {
   }
 
   async getProfile(): Promise<unknown> {
-    const user = await this.ensureDemoUser();
+    const user = await this.ensureCurrentUser();
+    const defaults =
+      this.runtimeConfig.value.mode === "fixture"
+        ? demoProfile
+        : liveProfileDefaults;
     return {
-      ...demoProfile,
+      ...defaults,
       ...asRecord(user.profile),
-      displayName: user.displayName ?? demoProfile.displayName,
-      email: user.email ?? demoProfile.email,
+      displayName: user.displayName ?? defaults.displayName,
+      email: user.email ?? defaults.email,
       id: user.id,
-      mode: "fixture",
-      name: user.displayName ?? demoProfile.displayName,
+      mode: this.runtimeConfig.value.mode,
+      name: user.displayName ?? defaults.displayName,
       updatedAt: user.updatedAt.toISOString(),
     };
   }
@@ -790,7 +951,17 @@ export class ProductService implements OnApplicationBootstrap {
       throw new BadRequestException("Provide at least one profile change.");
     }
 
-    const user = await this.ensureDemoUser();
+    const user = await this.ensureCurrentUser();
+
+    if (
+      this.runtimeConfig.value.mode === "live" &&
+      dto.email !== undefined &&
+      dto.email !== this.currentIdentity.identity.email
+    ) {
+      throw new BadRequestException(
+        "Manage your sign-in email through the authentication profile.",
+      );
+    }
 
     if (dto.email && dto.email !== user.email) {
       const existing = await this.database.user.findUnique({
@@ -804,8 +975,12 @@ export class ProductService implements OnApplicationBootstrap {
     const displayName = dto.displayName ?? dto.name ?? user.displayName;
     const profileChanges = { ...dto };
     delete profileChanges.name;
+    const defaults =
+      this.runtimeConfig.value.mode === "fixture"
+        ? demoProfile
+        : liveProfileDefaults;
     const profile = {
-      ...demoProfile,
+      ...defaults,
       ...asRecord(user.profile),
       ...profileChanges,
       displayName,
@@ -822,7 +997,7 @@ export class ProductService implements OnApplicationBootstrap {
   }
 
   async getSettings(): Promise<unknown> {
-    const user = await this.ensureDemoUser();
+    const user = await this.ensureCurrentUser();
     const stored = asRecord(user.settings);
     const evidenceRetentionDays =
       typeof stored.evidenceRetentionDays === "number"
@@ -842,7 +1017,7 @@ export class ProductService implements OnApplicationBootstrap {
       ...stored,
       aiDisclosure: true,
       evidenceRetentionDays,
-      mode: "fixture",
+      mode: this.runtimeConfig.value.mode,
       recordingConsent: recordingConsentDefault,
       recordingConsentDefault,
       retentionDays: evidenceRetentionDays,
@@ -855,7 +1030,7 @@ export class ProductService implements OnApplicationBootstrap {
       throw new BadRequestException("Provide at least one settings change.");
     }
 
-    const user = await this.ensureDemoUser();
+    const user = await this.ensureCurrentUser();
     const { recordingConsent, retentionDays, ...canonicalChanges } = dto;
     const settings = {
       ...demoSettings,
@@ -888,10 +1063,73 @@ export class ProductService implements OnApplicationBootstrap {
     return {
       generatedAt: new Date().toISOString(),
       jobs: jobs.items,
-      kind: "relay-fixture-account-export",
+      kind: "relay-account-export",
       profile,
       settings,
       version: 1,
+    };
+  }
+
+  async getIntakeContext(publicId: string): Promise<{
+    jobId: string;
+    mode: "fixture" | "live";
+    retentionDays: number;
+  }> {
+    const job = await this.findOwnedJob(publicId);
+    const user = await this.ensureCurrentUser();
+    const settings = asRecord(user.settings);
+    const retentionDays = [7, 30, 90].includes(
+      Number(settings.evidenceRetentionDays),
+    )
+      ? Number(settings.evidenceRetentionDays)
+      : demoSettings.evidenceRetentionDays;
+
+    return {
+      jobId: job.id,
+      mode: this.runtimeConfig.value.mode,
+      retentionDays,
+    };
+  }
+
+  async applyIntakeExtraction(
+    publicId: string,
+    extraction: JobSpecificationExtraction,
+    source: {
+      readonly evidenceIds: readonly string[];
+      readonly kind: "document" | "voice";
+      readonly provider: string;
+    },
+  ): Promise<unknown> {
+    const job = await this.findOwnedJob(publicId);
+    const current = asRecord(job.specification);
+    const facts = extraction.facts;
+    const merged = {
+      ...current,
+      ...facts,
+      vertical: "moving",
+    };
+
+    await this.database.job.update({
+      data: {
+        confirmedAt: null,
+        specification: toJson(merged),
+        status: "DRAFT",
+      },
+      where: { id: job.id },
+    });
+    await this.recordAudit(job.id, `intake.${source.kind}.extracted`, {
+      confidence: extraction.confidence,
+      evidenceIds: source.evidenceIds,
+      provider: source.provider,
+      sourceSummary: extraction.sourceSummary,
+      warnings: extraction.warnings,
+    });
+
+    return {
+      evidenceIds: source.evidenceIds,
+      extraction,
+      job: await this.getJob(publicId),
+      mode: this.runtimeConfig.value.mode,
     };
   }
 
@@ -909,8 +1147,50 @@ export class ProductService implements OnApplicationBootstrap {
     });
   }
 
+  private async ensureCurrentUser() {
+    const identity = this.currentIdentity.identity;
+    if (identity.provider === "local") return this.ensureDemoUser();
+
+    return this.database.user.upsert({
+      create: {
+        id: identity.subject,
+        displayName: identity.displayName ?? null,
+        email: identity.email ?? null,
+        profile: toJson({
+          ...(identity.displayName === undefined
+            ? {}
+            : { displayName: identity.displayName }),
+          ...(identity.email === undefined ? {} : { email: identity.email }),
+        }),
+        settings: toJson(demoSettings),
+      },
+      update: {
+        ...(identity.displayName === undefined
+          ? {}
+          : { displayName: identity.displayName }),
+        ...(identity.email === undefined ? {} : { email: identity.email }),
+      },
+      where: { id: identity.subject },
+    });
+  }
+
+  private async ensureLocalFixture(userId: string): Promise<void> {
+    if (
+      this.runtimeConfig.value.mode !== "fixture" ||
+      userId !== DEMO_USER_ID
+    ) {
+      return;
+    }
+    const fixture = await this.database.job.findUnique({
+      select: { id: true },
+      where: { id: DEMO_JOB_ID },
+    });
+    if (!fixture) await this.seedDeterministicFixtures();
+  }
+
   private async findOwnedJob(publicId: string): Promise<JobRecord> {
-    const user = await this.ensureDemoUser();
+    const user = await this.ensureCurrentUser();
+    await this.ensureLocalFixture(user.id);
     const job = await this.database.job.findFirst({
       include: jobInclude,
       where: { publicId, userId: user.id },
@@ -924,7 +1204,8 @@ export class ProductService implements OnApplicationBootstrap {
   }
 
   private async findOwnedRun(runId: string): Promise<RunRecord> {
-    const user = await this.ensureDemoUser();
+    const user = await this.ensureCurrentUser();
+    await this.ensureLocalFixture(user.id);
     const run = await this.database.negotiationRun.findFirst({
       include: runInclude,
       where: { id: runId, job: { userId: user.id } },
@@ -990,7 +1271,7 @@ export class ProductService implements OnApplicationBootstrap {
       consent,
       draft: job.specification,
       latestRunId: latestRun?.id ?? null,
-      mode: "fixture",
+      mode: this.runtimeConfig.value.mode,
     };
   }
 
@@ -1044,6 +1325,133 @@ export class ProductService implements OnApplicationBootstrap {
         where: { jobId_businessId: { businessId: business.id, jobId } },
       });
     }
+  }
+
+  private async createLiveRun(
+    jobId: string,
+    specificationVersionId: string,
+    businessIds: readonly string[],
+    correlationId: string,
+  ) {
+    const consentedAt = new Date();
+    const traceId = randomUUID();
+    const strategies = [
+      {
+        contract: "discount_request",
+        database: "DISCOUNT_REQUEST",
+      },
+      { contract: "fee_removal", database: "FEE_REMOVAL" },
+      {
+        contract: "promotion_request",
+        database: "PROMOTION_REQUEST",
+      },
+      { contract: "price_match", database: "PRICE_MATCH" },
+    ] as const;
+
+    const run = await this.database.$transaction(async (transaction) => {
+      const createdRun = await transaction.negotiationRun.create({
+        data: {
+          aiDisclosureAcknowledgedAt: consentedAt,
+          callingConsentAt: consentedAt,
+          consentVersion: "relay-consent-v1",
+          correlationId,
+          jobId,
+          recordingConsentAt: consentedAt,
+          specificationVersionId,
+          status: "QUEUED",
+        },
+      });
+      await transaction.runEvent.create({
+        data: {
+          actor: "API",
+          correlationId,
+          eventType: "run.created",
+          id: `${createdRun.id}-event-1`,
+          occurredAt: consentedAt,
+          payload: toJson({ businessCount: businessIds.length }),
+          runId: createdRun.id,
+          sequence: 1,
+        },
+      });
+
+      for (const [index, businessId] of businessIds.entries()) {
+        const strategy = strategies[index % strategies.length];
+        if (!strategy) continue;
+        const negotiation = await transaction.negotiation.create({
+          data: {
+            businessId,
+            jobId,
+            metadata: toJson({
+              confirmedSpecificationVersionId: specificationVersionId,
+            }),
+            runId: createdRun.id,
+            status: "PENDING",
+            strategy: strategy.database,
+          },
+        });
+        const call = await transaction.call.create({
+          data: {
+            businessId,
+            jobId,
+            negotiationId: negotiation.id,
+            provider: "elevenlabs-agents",
+            runId: createdRun.id,
+            status: "QUEUED",
+          },
+        });
+        const envelope = createQueueJob(
+          "call.place",
+          {
+            businessId,
+            callId: call.id,
+            runId: createdRun.id,
+            specificationVersionId,
+            strategy: strategy.contract,
+          },
+          {
+            idempotencyKey: `run:${createdRun.id}:call:${call.id}:place:1`,
+            traceId,
+          },
+        );
+        await this.createOutboxEvent(
+          transaction,
+          createdRun.id,
+          "NegotiationRun",
+          envelope,
+        );
+      }
+
+      await transaction.jobBusiness.updateMany({
+        data: { status: "CONTACTING" },
+        where: { businessId: { in: [...businessIds] }, jobId },
+      });
+      await transaction.job.update({
+        data: { status: "CALLING" },
+        where: { id: jobId },
+      });
+      return createdRun;
+    });
+
+    await this.outbox.publishPending(run.id);
+    return run;
+  }
+
+  private async createOutboxEvent<Name extends QueueJobName>(
+    transaction: Prisma.TransactionClient,
+    aggregateId: string,
+    aggregateType: string,
+    envelope: QueueJobEnvelope<Name>,
+  ): Promise<void> {
+    await transaction.outboxEvent.create({
+      data: {
+        aggregateId,
+        aggregateType,
+        correlationId: envelope.traceId,
+        eventType: envelope.name,
+        idempotencyKey: envelope.idempotencyKey,
+        payload: toJson(envelope),
+      },
+    });
   }
 
   private async createFixtureRun(
@@ -1363,7 +1771,7 @@ export class ProductService implements OnApplicationBootstrap {
           }
         : null,
       metrics: presentRunMetrics(run, savings),
-      mode: "fixture",
+      mode: this.runtimeConfig.value.mode,
       rankedOffers: rankings.flatMap((ranking) => {
         const quote = quoteById.get(ranking.quoteId);
         if (!quote) return [];
@@ -1429,7 +1837,7 @@ export class ProductService implements OnApplicationBootstrap {
       id: run.id,
       jobPublicId: run.job.publicId,
       metrics: presentRunMetrics(run),
-      mode: "fixture",
+      mode: this.runtimeConfig.value.mode,
       paused: run.status === "PAUSED",
       quotes: run.quotes.map((quote) => presentQuote(quote)),
       specificationVersion: {

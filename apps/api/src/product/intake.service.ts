@@ -1,0 +1,384 @@
+import { createHash, randomUUID } from "node:crypto";
+
+import {
+  BadGatewayException,
+  BadRequestException,
+  Injectable,
+  ServiceUnavailableException,
+  UnprocessableEntityException,
+} from "@nestjs/common";
+import { EvidenceKind, type Prisma } from "@relay/database";
+import type {
+  EvidenceContentType,
+  ExtractionFileContentType,
+  JobSpecificationExtraction,
+  ProviderFailure,
+} from "@relay/integrations";
+
+// Nest constructor dependencies must remain runtime imports for emitted metadata.
+// eslint-disable-next-line @typescript-eslint/consistent-type-imports
+import { PrismaService } from "../database/prisma.service.js";
+// eslint-disable-next-line @typescript-eslint/consistent-type-imports
+import { ProviderCompositionService } from "../providers/provider-composition.service.js";
+// eslint-disable-next-line @typescript-eslint/consistent-type-imports
+import { ProductService } from "./product.service.js";
+
+const MAXIMUM_DOCUMENT_BYTES = 20 * 1024 * 1024;
+
+export interface IntakeUpload {
+  readonly buffer: Buffer;
+  readonly mimetype: string;
+  readonly originalname: string;
+  readonly size: number;
+}
+
+function toJson(value: unknown): Prisma.InputJsonValue {
+  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
+
+function checksum(body: Uint8Array): string {
+  return createHash("sha256").update(body).digest("hex");
+}
+
+function safeFilename(value: string): string {
+  const normalized = value
+    .normalize("NFKC")
+    .replaceAll(/[^A-Za-z0-9._-]/g, "-")
+    .replaceAll(/-+/g, "-")
+    .replace(/^[-.]+|[-.]+$/g, "")
+    .slice(0, 120);
+  return normalized || "intake-document";
+}
+
+function detectedContentType(
+  body: Uint8Array,
+): ExtractionFileContentType | undefined {
+  if (
+    body.length >= 5 &&
+    String.fromCharCode(...body.subarray(0, 5)) === "%PDF-"
+  ) {
+    return "application/pdf";
+  }
+  if (
+    body.length >= 3 &&
+    body[0] === 0xff &&
+    body[1] === 0xd8 &&
+    body[2] === 0xff
+  ) {
+    return "image/jpeg";
+  }
+  if (
+    body.length >= 8 &&
+    body[0] === 0x89 &&
+    body[1] === 0x50 &&
+    body[2] === 0x4e &&
+    body[3] === 0x47 &&
+    body[4] === 0x0d &&
+    body[5] === 0x0a &&
+    body[6] === 0x1a &&
+    body[7] === 0x0a
+  ) {
+    return "image/png";
+  }
+  if (
+    body.length >= 12 &&
+    String.fromCharCode(...body.subarray(0, 4)) === "RIFF" &&
+    String.fromCharCode(...body.subarray(8, 12)) === "WEBP"
+  ) {
+    return "image/webp";
+  }
+  return undefined;
+}
+
+function extension(contentType: EvidenceContentType): string {
+  const extensions: Readonly<Record<EvidenceContentType, string>> = {
+    "application/json": "json",
+    "application/pdf": "pdf",
+    "audio/mpeg": "mp3",
+    "audio/wav": "wav",
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "text/plain": "txt",
+  };
+  return extensions[contentType];
+}
+
+@Injectable()
+export class IntakeService {
+  constructor(
+    private readonly product: ProductService,
+    private readonly prisma: PrismaService,
+    private readonly providers: ProviderCompositionService,
+  ) {}
+
+  async extractDocument(
+    publicId: string,
+    upload: IntakeUpload,
+  ): Promise<unknown> {
+    if (
+      upload.size <= 0 ||
+      upload.buffer.length <= 0 ||
+      upload.size > MAXIMUM_DOCUMENT_BYTES ||
+      upload.buffer.length > MAXIMUM_DOCUMENT_BYTES
+    ) {
+      throw new BadRequestException(
+        "The document must be between 1 byte and 20 MB.",
+      );
+    }
+    const contentType = detectedContentType(upload.buffer);
+    if (!contentType) {
+      throw new BadRequestException(
+        "Only genuine PDF, JPEG, PNG, or WebP documents are supported.",
+      );
+    }
+    if (
+      upload.mimetype !== "application/octet-stream" &&
+      upload.mimetype !== contentType
+    ) {
+      throw new BadRequestException(
+        "The uploaded document type does not match its contents.",
+      );
+    }
+
+    const context = await this.product.getIntakeContext(publicId);
+    const sourceEvidenceId = randomUUID();
+    await this.persistEvidence({
+      body: upload.buffer,
+      contentType,
+      evidenceId: sourceEvidenceId,
+      filename: safeFilename(upload.originalname),
+      jobId: context.jobId,
+      kind:
+        contentType === "application/pdf"
+          ? EvidenceKind.WRITTEN_QUOTE
+          : EvidenceKind.SCREENSHOT,
+      metadata: { purpose: "job_specification_intake" },
+      mode: context.mode,
+      retentionDays: context.retentionDays,
+    });
+
+    const extractor = this.providers.extractionProvider;
+    if (!extractor) {
+      const extraction: JobSpecificationExtraction = {
+        confidence: 0,
+        facts: { vertical: "moving" },
+        sourceSummary: "The document was accepted in fixture mode.",
+        warnings: [
+          "Automatic document extraction activates when live OpenAI credentials are configured.",
+        ],
+      };
+      return this.product.applyIntakeExtraction(publicId, extraction, {
+        evidenceIds: [sourceEvidenceId],
+        kind: "document",
+        provider: "fixture",
+      });
+    }
+
+    const traceId = randomUUID();
+    const result = await extractor.extractJobSpecification(
+      {
+        input: {
+          body: upload.buffer,
+          contentType,
+          filename: safeFilename(upload.originalname),
+          kind: "file",
+        },
+      },
+      this.providers.createContext({ requestId: traceId, traceId }),
+    );
+    if (!result.ok) this.throwProviderFailure(result.error, "document");
+
+    const structuredEvidenceId = randomUUID();
+    await this.persistEvidence({
+      body: new TextEncoder().encode(JSON.stringify(result.value)),
+      contentType: "application/json",
+      evidenceId: structuredEvidenceId,
+      filename: "extraction.json",
+      jobId: context.jobId,
+      kind: EvidenceKind.STRUCTURED_EXTRACTION,
+      metadata: {
+        purpose: "job_specification_extraction",
+        sourceEvidenceId,
+      },
+      mode: context.mode,
+      retentionDays: context.retentionDays,
+    });
+    return this.product.applyIntakeExtraction(publicId, result.value, {
+      evidenceIds: [sourceEvidenceId, structuredEvidenceId],
+      kind: "document",
+      provider: extractor.name,
+    });
+  }
+
+  async createVoiceSession(publicId: string): Promise<unknown> {
+    const context = await this.product.getIntakeContext(publicId);
+    if (context.mode === "fixture") {
+      return {
+        available: false,
+        message:
+          "Voice interviews activate in live mode after ElevenLabs is configured.",
+        mode: context.mode,
+        signedUrl: null,
+      };
+    }
+
+    const traceId = randomUUID();
+    const result = await this.providers.createSignedInterviewUrl({
+      requestId: traceId,
+      traceId,
+    });
+    if (!result.ok) this.throwProviderFailure(result.error, "voice");
+    return { available: true, mode: context.mode, signedUrl: result.value };
+  }
+
+  async completeVoiceSession(
+    publicId: string,
+    conversationId: string,
+  ): Promise<unknown> {
+    const context = await this.product.getIntakeContext(publicId);
+    if (context.mode === "fixture") {
+      throw new UnprocessableEntityException(
+        "Voice interview completion requires live ElevenLabs configuration.",
+      );
+    }
+
+    const traceId = randomUUID();
+    const snapshot = await this.providers.fetchFinishedConversation(
+      conversationId,
+      { requestId: traceId, traceId },
+    );
+    if (!snapshot.ok) this.throwProviderFailure(snapshot.error, "voice");
+    const transcript = snapshot.value.transcriptText?.trim();
+    if (snapshot.value.status !== "completed" || !transcript) {
+      throw new UnprocessableEntityException(
+        "Finish the voice interview before importing its answers.",
+      );
+    }
+
+    const transcriptEvidenceId = randomUUID();
+    await this.persistEvidence({
+      body: new TextEncoder().encode(transcript),
+      contentType: "text/plain",
+      evidenceId: transcriptEvidenceId,
+      filename: "interview-transcript.txt",
+      jobId: context.jobId,
+      kind: EvidenceKind.TRANSCRIPT,
+      metadata: { conversationId, purpose: "job_specification_intake" },
+      mode: context.mode,
+      retentionDays: context.retentionDays,
+    });
+
+    const extractor = this.providers.extractionProvider;
+    if (!extractor) {
+      throw new ServiceUnavailableException(
+        "Voice interview extraction is temporarily unavailable.",
+      );
+    }
+    const extracted = await extractor.extractJobSpecification(
+      { input: { kind: "text", text: transcript } },
+      this.providers.createContext({ requestId: traceId, traceId }),
+    );
+    if (!extracted.ok) this.throwProviderFailure(extracted.error, "voice");
+
+    const structuredEvidenceId = randomUUID();
+    await this.persistEvidence({
+      body: new TextEncoder().encode(JSON.stringify(extracted.value)),
+      contentType: "application/json",
+      evidenceId: structuredEvidenceId,
+      filename: "extraction.json",
+      jobId: context.jobId,
+      kind: EvidenceKind.STRUCTURED_EXTRACTION,
+      metadata: {
+        conversationId,
+        purpose: "job_specification_extraction",
+        sourceEvidenceId: transcriptEvidenceId,
+      },
+      mode: context.mode,
+      retentionDays: context.retentionDays,
+    });
+    return this.product.applyIntakeExtraction(publicId, extracted.value, {
+      evidenceIds: [transcriptEvidenceId, structuredEvidenceId],
+      kind: "voice",
+      provider: extractor.name,
+    });
+  }
+
+  private async persistEvidence(input: {
+    readonly body: Uint8Array;
+    readonly contentType: EvidenceContentType;
+    readonly evidenceId: string;
+    readonly filename: string;
+    readonly jobId: string;
+    readonly kind: EvidenceKind;
+    readonly metadata: Readonly<Record<string, string>>;
+    readonly mode: "fixture" | "live";
+    readonly retentionDays: number;
+  }): Promise<void> {
+    const retentionUntil = new Date(
+      Date.now() + input.retentionDays * 86_400_000,
+    );
+    const storageKey = `jobs/${input.jobId}/intake/${input.evidenceId}/${safeFilename(input.filename)}.${extension(input.contentType)}`;
+    const storage = this.providers.evidenceStorage;
+    let stored:
+      | {
+          readonly contentLength: number;
+          readonly etag: string;
+          readonly key: string;
+        }
+      | undefined;
+    if (storage) {
+      const traceId = randomUUID();
+      const result = await storage.put(
+        {
+          body: input.body,
+          contentType: input.contentType,
+          key: storageKey,
+          metadata: input.metadata,
+          retentionUntil: retentionUntil.toISOString(),
+        },
+        this.providers.createContext({ requestId: traceId, traceId }),
+      );
+      if (!result.ok) this.throwProviderFailure(result.error, "storage");
+      stored = result.value;
+    }
+
+    await this.prisma.client.evidence.create({
+      data: {
+        checksum: checksum(input.body),
+        contentLength: stored?.contentLength ?? input.body.byteLength,
+        contentType: input.contentType,
+        id: input.evidenceId,
+        jobId: input.jobId,
+        kind: input.kind,
+        metadata: toJson({
+          ...input.metadata,
+          fixturePersistence:
+            input.mode === "fixture" ? "metadata_only" : undefined,
+        }),
+        provider: storage?.name ?? "fixture",
+        retentionUntil,
+        storageKey: stored?.key ?? `fixture://${storageKey}`,
+      },
+    });
+  }
+
+  private throwProviderFailure(
+    failure: ProviderFailure,
+    operation: "document" | "storage" | "voice",
+  ): never {
+    if (failure.code === "invalid-response") {
+      throw new BadGatewayException(
+        `The ${operation} provider returned an invalid response.`,
+      );
+    }
+    if (failure.code === "not-found") {
+      throw new UnprocessableEntityException(
+        `The ${operation} resource could not be found.`,
+      );
+    }
+    throw new ServiceUnavailableException(
+      `The ${operation} service is temporarily unavailable.`,
+    );
+  }
+}

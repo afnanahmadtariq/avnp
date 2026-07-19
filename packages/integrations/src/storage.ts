@@ -1,7 +1,14 @@
 import type { ProviderRequestContext, ProviderResult } from "./result.js";
 
 export type EvidenceContentType =
-  "application/json" | "audio/mpeg" | "audio/wav" | "text/plain";
+  | "application/json"
+  | "application/pdf"
+  | "audio/mpeg"
+  | "audio/wav"
+  | "image/jpeg"
+  | "image/png"
+  | "image/webp"
+  | "text/plain";
 
 export interface StoreEvidenceRequest {
   readonly body: Uint8Array;
