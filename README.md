@@ -8,6 +8,18 @@ The first product experience focuses on moving services: a customer confirms one
 
 [Watch the 60-second product demo](assets/demo/relay-demo.mp4) · [Watch the 59-second technical overview](assets/demo/relay-tech-overview.mp4) · [Open the editable video package](apps/video/README.md)
 
+## Product walkthrough
+
+| Build one complete brief                                                                        | Approve the businesses Relay will call                                                           |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| ![Choose how to give Relay the details of a purchase](assets/screenshots/relay-brief-input.jpg) | ![Review eligible businesses and the call plan](assets/screenshots/relay-business-selection.jpg) |
+
+| Follow calls, quotes, and evidence                                                                                           | Compare the final verified recommendation                                                            |
+| ---------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| ![Track completed calls and negotiation evidence in the Relay workspace](assets/screenshots/relay-negotiation-workspace.jpg) | ![Review Relay's evidence-backed provider recommendation](assets/screenshots/relay-final-report.jpg) |
+
+[Read the hackathon submission copy](docs/challenge/hackathon-submission.md), including the problem, audience, features, implementation, and demonstrated impact.
+
 ## Current foundation
 
 Relay is a private pnpm and Turborepo monorepo. The frontend is built with Nuxt and Vue; the API and background worker use NestJS. Internal workspaces use the final `@relay/*` scope.
@@ -96,6 +108,7 @@ Applications may depend on packages; packages never depend on applications. Prov
 - [Repository boundaries](docs/architecture/repository-layout.md)
 - [Relay brand system](docs/design/brand.md)
 - [Relay demo video package](apps/video/README.md)
+- [Hackathon submission copy](docs/challenge/hackathon-submission.md)
 - [Environment catalog](docs/development/environment.md)
 - [Production deployment](docs/operations/production-deployment.md)
 - [Execution task list](docs/project/task-list.md)
