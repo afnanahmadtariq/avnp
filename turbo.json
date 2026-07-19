@@ -18,12 +18,20 @@
       "dependsOn": ["^build"],
       "outputs": [".nuxt/**", ".output/**", "dist/**"]
     },
+    "@relay/database#build": {
+      "dependsOn": ["db:generate"],
+      "outputs": ["dist/**"]
+    },
     "lint": {
       "dependsOn": ["^lint"],
       "outputs": []
     },
     "typecheck": {
       "dependsOn": ["^build", "^typecheck"],
+      "outputs": []
+    },
+    "@relay/database#typecheck": {
+      "dependsOn": ["db:generate"],
       "outputs": []
     },
     "test": {

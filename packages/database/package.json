@@ -16,7 +16,7 @@
     }
   },
   "scripts": {
-    "build": "corepack pnpm run db:generate && tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json",
     "db:format": "prisma format",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
@@ -24,7 +24,7 @@
     "db:seed": "corepack pnpm run db:generate && tsc -p tsconfig.build.json && node prisma/seed.mjs",
     "db:validate": "prisma validate",
     "lint": "eslint . --max-warnings 0",
-    "typecheck": "corepack pnpm run db:generate && tsc --noEmit"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@prisma/adapter-pg": "7.8.0",
