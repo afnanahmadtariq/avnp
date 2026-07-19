@@ -1,5 +1,9 @@
 import { defineNuxtConfig } from "nuxt/config";
 
+const clerkEnabled = Boolean(
+  process.env.NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY?.trim(),
+);
+
 export default defineNuxtConfig({
   app: {
     head: {
@@ -45,10 +49,17 @@ export default defineNuxtConfig({
       );
     },
   },
-  modules: ["@nuxt/eslint"],
+  modules: ["@nuxt/eslint", ...(clerkEnabled ? ["@clerk/nuxt"] : [])],
   runtimeConfig: {
+    clerk: {
+      secretKey: process.env.CLERK_SECRET_KEY,
+    },
     public: {
       apiBase: "http://localhost:4000/api/v1",
+      authProvider: clerkEnabled ? "clerk" : "local",
+      clerk: {
+        publishableKey: process.env.NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
+      },
     },
   },
   routeRules: {

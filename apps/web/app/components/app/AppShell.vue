@@ -1,9 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted } from "vue";
+import { UserButton } from "@clerk/nuxt/components";
 
 import { useAccountIdentity } from "~/composables/useAccountIdentity";
 
 const route = useRoute();
+const runtimeConfig = useRuntimeConfig();
+const clerkEnabled = computed(
+  () => runtimeConfig.public.authProvider === "clerk",
+);
 const api = useRelayApi();
 const { publicId, runId } = useRequestContext();
 const {
@@ -108,9 +113,11 @@ onMounted(loadAccountIdentity);
       </NuxtLink>
       <div class="app-header__context">
         <span class="app-header__context-dot" aria-hidden="true" />
-        Local workspace
+        {{ clerkEnabled ? "Secure workspace" : "Local workspace" }}
       </div>
+      <UserButton v-if="clerkEnabled" />
       <NuxtLink
+        v-else
         aria-label="Open profile"
         class="app-header__profile"
         to="/profile"

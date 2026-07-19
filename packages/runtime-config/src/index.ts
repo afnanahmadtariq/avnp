@@ -41,8 +41,11 @@ export interface RelayRuntimeConfig {
   readonly call: {
     readonly agentId: string | undefined;
     readonly apiKey: string | undefined;
+    readonly interviewAgentId?: string | undefined;
     readonly phoneNumberId: string | undefined;
     readonly provider: CallProviderName;
+    readonly twilioAccountSid?: string | undefined;
+    readonly twilioAuthToken?: string | undefined;
     readonly webhookSecret: string | undefined;
   };
   readonly databaseUrl: string | undefined;
@@ -266,6 +269,9 @@ export function loadRuntimeConfig(
     call: {
       agentId: optionalValue(environment.ELEVENLABS_AGENT_ID),
       apiKey: optionalValue(environment.ELEVENLABS_API_KEY),
+      interviewAgentId:
+        optionalValue(environment.ELEVENLABS_INTERVIEW_AGENT_ID) ??
+        optionalValue(environment.ELEVENLABS_AGENT_ID),
       phoneNumberId: optionalValue(environment.ELEVENLABS_PHONE_NUMBER_ID),
       provider: enumValue(
         callProviderSchema,
@@ -273,6 +279,8 @@ export function loadRuntimeConfig(
         live ? "elevenlabs" : "fixture",
         "CALL_PROVIDER",
       ),
+      twilioAccountSid: optionalValue(environment.TWILIO_ACCOUNT_SID),
+      twilioAuthToken: optionalValue(environment.TWILIO_AUTH_TOKEN),
       webhookSecret: optionalValue(environment.ELEVENLABS_WEBHOOK_SECRET),
     },
     databaseUrl: urlValue(environment.DATABASE_URL, "DATABASE_URL"),

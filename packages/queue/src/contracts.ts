@@ -14,9 +14,15 @@ export type QueueName = (typeof queueNames)[keyof typeof queueNames];
 export interface DiscoverBusinessesPayload {
   readonly jobId: string;
   readonly limit: number;
-  readonly runId: string;
+  /** Present only when discovery is part of an already-created run. */
+  readonly runId?: string;
   readonly searchRadiusKm: number;
   readonly specificationVersionId: string;
+}
+
+export interface CancelCallPayload {
+  readonly callId: string;
+  readonly runId: string;
 }
 
 export interface PlaceCallPayload {
@@ -34,6 +40,8 @@ export interface ProcessCallOutcomePayload {
 }
 
 export interface NormalizeQuotePayload {
+  /** The evidenced call whose transcript is the extraction source. */
+  readonly callId: string;
   readonly quoteId: string;
   readonly runId: string;
 }
@@ -52,6 +60,7 @@ export interface ContinueNegotiationPayload {
 
 export interface QueuePayloadMap {
   readonly "business.discover": DiscoverBusinessesPayload;
+  readonly "call.cancel": CancelCallPayload;
   readonly "call.outcome.process": ProcessCallOutcomePayload;
   readonly "call.place": PlaceCallPayload;
   readonly "negotiation.continue": ContinueNegotiationPayload;
@@ -62,6 +71,7 @@ export interface QueuePayloadMap {
 export type QueueJobName = keyof QueuePayloadMap;
 
 export const queueJobNames = {
+  cancelCall: "call.cancel",
   continueNegotiation: "negotiation.continue",
   discoverBusinesses: "business.discover",
   normalizeQuote: "quote.normalize",
@@ -72,6 +82,7 @@ export const queueJobNames = {
 
 export const queueForJob = {
   "business.discover": queueNames.businessDiscovery,
+  "call.cancel": queueNames.callExecution,
   "call.outcome.process": queueNames.callExecution,
   "call.place": queueNames.callExecution,
   "negotiation.continue": queueNames.negotiationOrchestration,
@@ -241,14 +252,13 @@ function isPayload(name: QueueJobName, value: unknown): boolean {
   switch (name) {
     case "business.discover":
       return (
-        hasExactlyKeys(value, [
-          "jobId",
-          "limit",
-          "runId",
-          "searchRadiusKm",
-          "specificationVersionId",
-        ]) &&
-        hasIdentifiers(value, ["jobId", "runId", "specificationVersionId"]) &&
+        hasExactlyKeys(
+          value,
+          ["jobId", "limit", "searchRadiusKm", "specificationVersionId"],
+          ["runId"],
+        ) &&
+        hasIdentifiers(value, ["jobId", "specificationVersionId"]) &&
+        isOptionalIdentifier(value.runId) &&
         typeof value.limit === "number" &&
         Number.isInteger(value.limit) &&
         value.limit >= 1 &&
@@ -257,6 +267,11 @@ function isPayload(name: QueueJobName, value: unknown): boolean {
         Number.isFinite(value.searchRadiusKm) &&
         value.searchRadiusKm > 0 &&
         value.searchRadiusKm <= 500
+      );
+    case "call.cancel":
+      return (
+        hasExactlyKeys(value, ["callId", "runId"]) &&
+        hasIdentifiers(value, ["callId", "runId"])
       );
     case "call.outcome.process":
       return (
@@ -293,8 +308,8 @@ function isPayload(name: QueueJobName, value: unknown): boolean {
       );
     case "quote.normalize":
       return (
-        hasExactlyKeys(value, ["quoteId", "runId"]) &&
-        hasIdentifiers(value, ["quoteId", "runId"])
+        hasExactlyKeys(value, ["callId", "quoteId", "runId"]) &&
+        hasIdentifiers(value, ["callId", "quoteId", "runId"])
       );
     case "quote.rank":
       return (

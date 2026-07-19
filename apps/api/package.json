@@ -15,12 +15,15 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@clerk/backend": "3.11.7",
     "@nestjs/common": "11.1.28",
     "@nestjs/core": "11.1.28",
     "@nestjs/platform-express": "11.1.28",
     "@relay/contracts": "workspace:*",
     "@relay/database": "workspace:*",
     "@relay/domain": "workspace:*",
+    "@relay/integrations": "workspace:*",
+    "@relay/queue": "workspace:*",
     "@relay/runtime-config": "workspace:*",
     "class-transformer": "0.5.1",
     "class-validator": "0.15.1",

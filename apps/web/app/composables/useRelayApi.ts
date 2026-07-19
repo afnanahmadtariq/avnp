@@ -13,6 +13,7 @@ import type {
   RunReport,
   RunSnapshot,
 } from "~/types/api";
+import { useAuth } from "@clerk/nuxt/composables";
 
 interface CreateJobInput {
   specification: JobSpecification;
@@ -66,14 +67,18 @@ function errorMessage(error: unknown): string {
 export function useRelayApi() {
   const config = useRuntimeConfig();
   const baseURL = String(config.public.apiBase).replace(/\/$/, "");
+  const clerkAuth =
+    config.public.authProvider === "clerk" ? useAuth() : undefined;
 
   async function request<T>(
     path: string,
     options: ApiRequestOptions = {},
   ): Promise<T> {
     try {
+      const token = await clerkAuth?.getToken.value();
       return await $fetch<T>(`${baseURL}${path}`, {
         body: options.body as Record<string, unknown> | undefined,
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
         method: options.method ?? "GET",
       });
     } catch (error: unknown) {

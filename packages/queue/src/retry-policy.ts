@@ -11,6 +11,7 @@ export interface QueueRetryPolicy {
 
 export const queueRetryPolicies = {
   "business.discover": retryPolicy(5, 2_000),
+  "call.cancel": retryPolicy(5, 2_000),
   "call.outcome.process": retryPolicy(8, 1_000),
   // Provider-side idempotency must use the envelope idempotency key because a
   // timeout can occur after a billable call has already been accepted.

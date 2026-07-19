@@ -38,6 +38,7 @@ export function createUnconfiguredJobHandlers(): WorkerJobHandlers {
     };
 
   return {
+    [queueJobNames.cancelCall]: unconfigured(queueJobNames.cancelCall),
     [queueJobNames.continueNegotiation]: unconfigured(
       queueJobNames.continueNegotiation,
     ),
@@ -60,6 +61,8 @@ export function dispatchQueueJob(
 ): Promise<void> {
   switch (envelope.name) {
     case "business.discover":
+      return handlers[envelope.name](envelope, context);
+    case "call.cancel":
       return handlers[envelope.name](envelope, context);
     case "call.outcome.process":
       return handlers[envelope.name](envelope, context);

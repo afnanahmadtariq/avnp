@@ -25,6 +25,7 @@ export {
 } from "./contracts.js";
 export type {
   AnyQueueJobEnvelope,
+  CancelCallPayload,
   ContinueNegotiationPayload,
   DiscoverBusinessesPayload,
   NormalizeQuotePayload,
