@@ -28,14 +28,15 @@ import {
   type NegotiationStrategy as DatabaseNegotiationStrategy,
 } from "@relay/database";
 import { rankQuotes } from "@relay/domain";
-import type {
-  CallProvider,
-  ProviderFailure,
-  ProviderRequestContext,
-  ProviderResult,
-  StoreEvidenceRequest,
-  StoredEvidence,
-  TruthfulCallLeverage,
+import {
+  pendingCallRegistrationMarker,
+  type CallProvider,
+  type ProviderFailure,
+  type ProviderRequestContext,
+  type ProviderResult,
+  type StoreEvidenceRequest,
+  type StoredEvidence,
+  type TruthfulCallLeverage,
 } from "@relay/integrations";
 import {
   createQueueJob,
@@ -902,6 +903,16 @@ export class WorkerOrchestrationService {
       );
     }
     if (call.providerCallId !== null) {
+      await this.reconcilePendingCallWebhooks(
+        {
+          id: call.id,
+          jobId: call.jobId,
+          providerCallId: call.providerCallId,
+          runId: run.id,
+        },
+        provider.name,
+        envelope.traceId,
+      );
       if (!TERMINAL_CALL_STATUSES.has(call.status)) {
         await this.enqueueOutcomePoll(
           call.id,
@@ -1105,6 +1116,16 @@ export class WorkerOrchestrationService {
         "The provider call could not be registered and was cancelled to prevent an orphaned call.",
       );
     }
+    await this.reconcilePendingCallWebhooks(
+      {
+        id: registeredCall.id,
+        jobId: registeredCall.jobId,
+        providerCallId: started.value.providerCallId,
+        runId: run.id,
+      },
+      provider.name,
+      envelope.traceId,
+    );
     if (registeredCall.run?.status === NegotiationRunStatus.PAUSED) {
       await this.pauseRegisteredProviderCall(
         {
@@ -2851,6 +2872,60 @@ export class WorkerOrchestrationService {
         },
       ),
     );
+  }
+
+  private async reconcilePendingCallWebhooks(
+    call: {
+      readonly id: string;
+      readonly jobId: string;
+      readonly providerCallId: string;
+      readonly runId: string;
+    },
+    provider: string,
+    traceId: string,
+  ): Promise<void> {
+    const pendingRegistration = pendingCallRegistrationMarker(
+      provider,
+      call.providerCallId,
+    );
+    const events = await this.client.webhookEvent.findMany({
+      orderBy: { receivedAt: "asc" },
+      select: { id: true, providerEventId: true },
+      where: {
+        failureMessage: pendingRegistration,
+        processedAt: null,
+        provider,
+      },
+    });
+
+    for (const event of events) {
+      await this.queue.enqueue(
+        createQueueJob(
+          queueJobNames.processCallOutcome,
+          {
+            callId: call.id,
+            providerEventId: event.providerEventId,
+            runId: call.runId,
+          },
+          {
+            idempotencyKey: `webhook:${provider}:${event.providerEventId}`,
+            traceId,
+          },
+        ),
+      );
+      await this.client.webhookEvent.updateMany({
+        data: {
+          failureMessage: null,
+          jobId: call.jobId,
+          processedAt: new Date(),
+        },
+        where: {
+          failureMessage: pendingRegistration,
+          id: event.id,
+          processedAt: null,
+        },
+      });
+    }
   }
 
   private async enqueueRank(

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type {
   Business,
   CallOutcome,
@@ -7,6 +9,23 @@ import type {
 } from "@relay/contracts";
 
 import type { ProviderRequestContext, ProviderResult } from "./result.js";
+
+const PENDING_CALL_REGISTRATION_PREFIX = "pending_call_registration:";
+
+/**
+ * Durable, non-sensitive marker used to join a verified webhook to a call that
+ * may still be between provider acceptance and local persistence.
+ */
+export function pendingCallRegistrationMarker(
+  provider: string,
+  providerCallId: string,
+): string {
+  const digest = createHash("sha256")
+    .update(`${provider}\u0000${providerCallId}`)
+    .digest("hex");
+
+  return `${PENDING_CALL_REGISTRATION_PREFIX}${digest}`;
+}
 
 export interface TruthfulCallLeverage {
   readonly competingBusinessName: string;

@@ -2,10 +2,11 @@ import "reflect-metadata";
 
 import { BadRequestException, UnauthorizedException } from "@nestjs/common";
 import { CallStatus as DatabaseCallStatus } from "@relay/database";
-import type {
-  CallProvider,
-  ProviderResult,
-  VerifiedCallEvent,
+import {
+  pendingCallRegistrationMarker,
+  type CallProvider,
+  type ProviderResult,
+  type VerifiedCallEvent,
 } from "@relay/integrations";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -24,6 +25,17 @@ const event: VerifiedCallEvent = {
   status: "completed",
   transcriptText: "Agent: Hello\nBusiness: The total is $1,850.",
 };
+const persistedCall = {
+  endedAt: null,
+  id: "call-1",
+  jobId: "job-1",
+  runId: "run-1",
+  startedAt: null,
+  status: DatabaseCallStatus.NEGOTIATING,
+  structuredOutcome: null,
+  transcriptText: null,
+  updatedAt: new Date("2026-07-19T11:59:00.000Z"),
+};
 
 function verified(
   value: VerifiedCallEvent = event,
@@ -38,6 +50,7 @@ describe("ElevenLabsWebhookService", () => {
   const updateMany = vi.fn();
   const upsert = vi.fn();
   const updateWebhook = vi.fn();
+  const updateWebhookMany = vi.fn();
 
   function createService(): ElevenLabsWebhookService {
     const callProvider = {
@@ -57,7 +70,11 @@ describe("ElevenLabsWebhookService", () => {
     } as unknown as ProviderCompositionService;
     const client = {
       call: { findUnique, updateMany },
-      webhookEvent: { update: updateWebhook, upsert },
+      webhookEvent: {
+        update: updateWebhook,
+        updateMany: updateWebhookMany,
+        upsert,
+      },
     };
     const prisma = { client } as unknown as PrismaService;
     return new ElevenLabsWebhookService(providers, prisma, queue);
@@ -66,18 +83,9 @@ describe("ElevenLabsWebhookService", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     verifyWebhook.mockResolvedValue(verified());
-    findUnique.mockResolvedValue({
-      endedAt: null,
-      id: "call-1",
-      jobId: "job-1",
-      runId: "run-1",
-      startedAt: null,
-      status: DatabaseCallStatus.NEGOTIATING,
-      structuredOutcome: null,
-      transcriptText: null,
-      updatedAt: new Date("2026-07-19T11:59:00.000Z"),
-    });
+    findUnique.mockResolvedValue(persistedCall);
     upsert.mockResolvedValue({
+      failureMessage: null,
       id: "webhook-1",
       payloadHash:
         "4d9f031491abddf443d8bcfc172a7fc14619e6b7e80cc2ba6b452aa303abf291",
@@ -89,6 +97,7 @@ describe("ElevenLabsWebhookService", () => {
       queueName: "call-execution",
     });
     updateWebhook.mockResolvedValue({ id: "webhook-1" });
+    updateWebhookMany.mockResolvedValue({ count: 1 });
   });
 
   it("authenticates, records, advances, and enqueues a webhook once", async () => {
@@ -106,6 +115,10 @@ describe("ElevenLabsWebhookService", () => {
     expect(upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         create: expect.objectContaining({
+          failureMessage: pendingCallRegistrationMarker(
+            "elevenlabs-agents",
+            "conversation-1",
+          ),
           jobId: "job-1",
           provider: "elevenlabs-agents",
           providerEventId: "elevenlabs:event-1",
@@ -133,13 +146,82 @@ describe("ElevenLabsWebhookService", () => {
       }),
     );
     expect(updateWebhook).toHaveBeenLastCalledWith({
-      data: { failureMessage: null, processedAt: expect.any(Date) },
+      data: {
+        failureMessage: null,
+        jobId: "job-1",
+        processedAt: expect.any(Date),
+      },
+      where: { id: "webhook-1" },
+    });
+  });
+
+  it("keeps an early unmatched event pending for call registration", async () => {
+    findUnique.mockResolvedValue(null);
+    const service = createService();
+
+    await expect(
+      service.receive({
+        body,
+        headers: { "elevenlabs-signature": "signed" },
+        requestId: "request-early",
+        traceId: "trace-early",
+      }),
+    ).resolves.toEqual({ accepted: true, duplicate: false });
+
+    const pendingRegistration = pendingCallRegistrationMarker(
+      "elevenlabs-agents",
+      "conversation-1",
+    );
+    expect(findUnique).toHaveBeenCalledTimes(2);
+    expect(upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          failureMessage: pendingRegistration,
+          providerEventId: "elevenlabs:event-1",
+        }),
+      }),
+    );
+    expect(updateWebhookMany).toHaveBeenCalledWith({
+      data: { failureMessage: pendingRegistration },
+      where: { id: "webhook-1", processedAt: null },
+    });
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(updateWebhook).not.toHaveBeenCalled();
+  });
+
+  it("closes the race when call registration commits after event persistence", async () => {
+    findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce(persistedCall);
+    const service = createService();
+
+    await expect(
+      service.receive({
+        body,
+        headers: { "elevenlabs-signature": "signed" },
+        requestId: "request-raced",
+        traceId: "trace-raced",
+      }),
+    ).resolves.toEqual({ accepted: true, duplicate: false });
+
+    expect(updateMany).toHaveBeenCalledOnce();
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idempotencyKey: "webhook:elevenlabs-agents:elevenlabs:event-1",
+      }),
+    );
+    expect(updateWebhook).toHaveBeenLastCalledWith({
+      data: {
+        failureMessage: null,
+        jobId: "job-1",
+        processedAt: expect.any(Date),
+      },
       where: { id: "webhook-1" },
     });
   });
 
   it("acknowledges an already processed provider event without replaying it", async () => {
     upsert.mockResolvedValue({
+      failureMessage: null,
       id: "webhook-1",
       payloadHash:
         "4d9f031491abddf443d8bcfc172a7fc14619e6b7e80cc2ba6b452aa303abf291",
@@ -158,6 +240,59 @@ describe("ElevenLabsWebhookService", () => {
 
     expect(updateMany).not.toHaveBeenCalled();
     expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it("recovers a signed replay of an event ignored by the legacy race", async () => {
+    upsert.mockResolvedValue({
+      failureMessage: "No matching provider call was registered.",
+      id: "webhook-legacy",
+      payloadHash:
+        "4d9f031491abddf443d8bcfc172a7fc14619e6b7e80cc2ba6b452aa303abf291",
+      processedAt: new Date("2026-07-19T12:01:00.000Z"),
+    });
+    const service = createService();
+
+    await expect(
+      service.receive({
+        body,
+        headers: { "elevenlabs-signature": "signed" },
+        requestId: "request-legacy-replay",
+        traceId: "trace-legacy-replay",
+      }),
+    ).resolves.toEqual({ accepted: true, duplicate: false });
+
+    expect(updateWebhookMany).toHaveBeenCalledWith({
+      data: {
+        failureMessage: pendingCallRegistrationMarker(
+          "elevenlabs-agents",
+          "conversation-1",
+        ),
+        processedAt: null,
+      },
+      where: {
+        failureMessage: {
+          in: [
+            "No matching provider call was registered.",
+            "The matching call is not attached to a negotiation run.",
+          ],
+        },
+        id: "webhook-legacy",
+        processedAt: { not: null },
+      },
+    });
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idempotencyKey: "webhook:elevenlabs-agents:elevenlabs:event-1",
+      }),
+    );
+    expect(updateWebhook).toHaveBeenLastCalledWith({
+      data: {
+        failureMessage: null,
+        jobId: "job-1",
+        processedAt: expect.any(Date),
+      },
+      where: { id: "webhook-legacy" },
+    });
   });
 
   it("does not regress a terminal call when an older event arrives", async () => {

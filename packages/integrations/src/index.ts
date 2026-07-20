@@ -7,15 +7,16 @@ export {
   type GooglePlacesConfig,
   type GooglePlacesDependencies,
 } from "./google-places.js";
-export type {
-  CallProvider,
-  CallRecording,
-  CallRecordingContentType,
-  CallStatusSnapshot,
-  StartedCall,
-  StartCallRequest,
-  TruthfulCallLeverage,
-  VerifiedCallEvent,
+export {
+  pendingCallRegistrationMarker,
+  type CallProvider,
+  type CallRecording,
+  type CallRecordingContentType,
+  type CallStatusSnapshot,
+  type StartedCall,
+  type StartCallRequest,
+  type TruthfulCallLeverage,
+  type VerifiedCallEvent,
 } from "./calls.js";
 export {
   ElevenLabsTwilioCallProvider,

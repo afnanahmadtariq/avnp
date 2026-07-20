@@ -8,10 +8,11 @@ import {
   QuoteEstimateType,
   QuoteStatus,
 } from "@relay/database";
-import type {
-  CallProvider,
-  ProviderResult,
-  StructuredExtractionProvider,
+import {
+  pendingCallRegistrationMarker,
+  type CallProvider,
+  type ProviderResult,
+  type StructuredExtractionProvider,
 } from "@relay/integrations";
 import {
   createQueueJob,
@@ -750,6 +751,7 @@ describe("WorkerOrchestrationService", () => {
       queueName: queueNames.callExecution,
     }));
     const client = {
+      ...emptyWebhookEventClient(),
       call: {
         findUnique: vi.fn(async () => ({
           businessId: "business-1",
@@ -793,7 +795,98 @@ describe("WorkerOrchestrationService", () => {
     );
   });
 
-  it("revalidates and passes truthful leverage immediately before a follow-up call", async () => {
+  it("reconciles a verified webhook that arrived before call registration", async () => {
+    const startCall = vi.fn();
+    const enqueue = vi.fn(async () => ({
+      jobId: "outcome-job",
+      queueName: queueNames.callExecution,
+    }));
+    const findPending = vi.fn(async () => [
+      { id: "webhook-early", providerEventId: "elevenlabs:event-early" },
+    ]);
+    const markProcessed = vi.fn(async () => ({ count: 1 }));
+    const client = {
+      call: {
+        findUnique: vi.fn(async () => ({
+          ...followUpCallFixture(),
+          providerCallId: "conversation-early",
+          status: DatabaseCallStatus.DIALING,
+        })),
+      },
+      webhookEvent: {
+        findMany: findPending,
+        updateMany: markProcessed,
+      },
+    } as unknown as DatabaseClient;
+    const orchestrator = createOrchestrator({
+      callProvider: fakeCallProvider({ startCall }),
+      client,
+      enqueue,
+    });
+    const envelope = createQueueJob(
+      queueJobNames.placeCall,
+      {
+        businessId: "business-current",
+        callId: "call-follow-up",
+        runId: "run-1",
+        specificationVersionId: "version-1",
+        strategy: "fee_removal",
+      },
+      { idempotencyKey: "call-follow-up:retry", traceId: "trace-early" },
+    );
+
+    await orchestrator.placeCall(envelope, processingContext());
+
+    const pendingRegistration = pendingCallRegistrationMarker(
+      "fake-calls",
+      "conversation-early",
+    );
+    expect(startCall).not.toHaveBeenCalled();
+    expect(findPending).toHaveBeenCalledWith({
+      orderBy: { receivedAt: "asc" },
+      select: { id: true, providerEventId: true },
+      where: {
+        failureMessage: pendingRegistration,
+        processedAt: null,
+        provider: "fake-calls",
+      },
+    });
+    expect(enqueue).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        idempotencyKey: "webhook:fake-calls:elevenlabs:event-early",
+        name: queueJobNames.processCallOutcome,
+        payload: {
+          callId: "call-follow-up",
+          providerEventId: "elevenlabs:event-early",
+          runId: "run-1",
+        },
+      }),
+    );
+    expect(markProcessed).toHaveBeenCalledWith({
+      data: {
+        failureMessage: null,
+        jobId: "job-1",
+        processedAt: expect.any(Date),
+      },
+      where: {
+        failureMessage: pendingRegistration,
+        id: "webhook-early",
+        processedAt: null,
+      },
+    });
+    expect(enqueue).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        idempotencyKey: "call-follow-up:outcome-poll:conversation-early",
+        payload: expect.objectContaining({
+          providerEventId: "poll:conversation-early",
+        }),
+      }),
+    );
+  });
+
+  it("revalidates leverage and reconciles a raced webhook after registration", async () => {
     const startCall = vi.fn(async () => ({
       ok: true as const,
       value: {
@@ -844,6 +937,10 @@ describe("WorkerOrchestrationService", () => {
       },
     };
     const claimCall = vi.fn(async () => ({ count: 1 }));
+    const findPending = vi.fn(async () => [
+      { id: "webhook-raced", providerEventId: "elevenlabs:event-raced" },
+    ]);
+    const markProcessed = vi.fn(async () => ({ count: 1 }));
     const client = {
       $transaction: vi.fn(async (operation: unknown) => {
         return (operation as (value: unknown) => Promise<unknown>)(
@@ -856,6 +953,10 @@ describe("WorkerOrchestrationService", () => {
         updateMany: claimCall,
       },
       quote: leverageQuoteQueries(current, competing),
+      webhookEvent: {
+        findMany: findPending,
+        updateMany: markProcessed,
+      },
     } as unknown as DatabaseClient;
     const orchestrator = createOrchestrator({
       callProvider: fakeCallProvider({ startCall }),
@@ -902,6 +1003,41 @@ describe("WorkerOrchestrationService", () => {
         data: expect.not.objectContaining({ status: expect.anything() }),
       }),
     );
+    const pendingRegistration = pendingCallRegistrationMarker(
+      "fake-calls",
+      "conversation-follow-up",
+    );
+    expect(findPending).toHaveBeenCalledWith({
+      orderBy: { receivedAt: "asc" },
+      select: { id: true, providerEventId: true },
+      where: {
+        failureMessage: pendingRegistration,
+        processedAt: null,
+        provider: "fake-calls",
+      },
+    });
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idempotencyKey: "webhook:fake-calls:elevenlabs:event-raced",
+        payload: {
+          callId: "call-follow-up",
+          providerEventId: "elevenlabs:event-raced",
+          runId: "run-1",
+        },
+      }),
+    );
+    expect(markProcessed).toHaveBeenCalledWith({
+      data: {
+        failureMessage: null,
+        jobId: "job-1",
+        processedAt: expect.any(Date),
+      },
+      where: {
+        failureMessage: pendingRegistration,
+        id: "webhook-raced",
+        processedAt: null,
+      },
+    });
     expect(enqueue).toHaveBeenCalledWith(
       expect.objectContaining({
         idempotencyKey: "call-follow-up:outcome-poll:conversation-follow-up",
@@ -956,6 +1092,7 @@ describe("WorkerOrchestrationService", () => {
       .mockResolvedValueOnce({ count: 1 })
       .mockResolvedValueOnce({ count: 0 });
     const client = {
+      ...emptyWebhookEventClient(),
       $transaction: vi.fn(async (operation: unknown) =>
         (operation as (value: unknown) => Promise<unknown>)(transactionClient),
       ),
@@ -1187,6 +1324,7 @@ describe("WorkerOrchestrationService", () => {
     const updateCall = vi.fn(async () => ({ id: "call-follow-up" }));
     const updateCallMany = vi.fn(async () => ({ count: 1 }));
     const client = {
+      ...emptyWebhookEventClient(),
       $transaction: vi.fn(async (operation: unknown) =>
         (operation as (value: unknown) => Promise<unknown>)(transactionClient),
       ),
@@ -1712,6 +1850,15 @@ function eventTransactionClient(createEvent: ReturnType<typeof vi.fn>) {
       create: createEvent,
       findFirst: vi.fn(async () => null),
       findUnique: vi.fn(async () => null),
+    },
+  };
+}
+
+function emptyWebhookEventClient() {
+  return {
+    webhookEvent: {
+      findMany: vi.fn(async () => []),
+      updateMany: vi.fn(async () => ({ count: 0 })),
     },
   };
 }

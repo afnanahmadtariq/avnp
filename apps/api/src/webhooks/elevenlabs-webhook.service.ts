@@ -15,7 +15,11 @@ import {
   CallStatus as DatabaseCallStatus,
   type DatabaseClient,
 } from "@relay/database";
-import type { ProviderFailure, VerifiedCallEvent } from "@relay/integrations";
+import {
+  pendingCallRegistrationMarker,
+  type ProviderFailure,
+  type VerifiedCallEvent,
+} from "@relay/integrations";
 import { createQueueJob } from "@relay/queue";
 
 // Nest constructor dependencies must remain runtime imports for emitted metadata.
@@ -79,6 +83,10 @@ const terminalStatuses = new Set<DatabaseCallStatus>([
   DatabaseCallStatus.FAILED,
   DatabaseCallStatus.CANCELLED,
 ]);
+const legacyIgnoredRegistrationReasons = [
+  "No matching provider call was registered.",
+  "The matching call is not attached to a negotiation run.",
+] as const;
 
 function databaseStatus(
   status: VerifiedCallEvent["status"],
@@ -134,6 +142,10 @@ function transcriptProcessingFinished(value: unknown): boolean {
   return ["completed", "failed", "skipped"].includes(String(extraction));
 }
 
+function isLegacyIgnoredRegistrationReason(value: string | null): boolean {
+  return legacyIgnoredRegistrationReasons.some((reason) => reason === value);
+}
+
 @Injectable()
 export class ElevenLabsWebhookService {
   private readonly logger = new Logger(ElevenLabsWebhookService.name);
@@ -165,30 +177,51 @@ export class ElevenLabsWebhookService {
     const provider = callProvider.name;
     const payloadHash = createHash("sha256").update(request.body).digest("hex");
     const client = this.prisma.client;
-    const call = await this.findCall(client, provider, event.providerCallId);
+    let call = await this.findCall(client, provider, event.providerCallId);
+    const pendingRegistration = pendingCallRegistrationMarker(
+      provider,
+      event.providerCallId,
+    );
     const webhookEvent = await this.upsertWebhookEvent(
       client,
       provider,
       event,
       payloadHash,
       call?.jobId,
+      pendingRegistration,
     );
 
     if (webhookEvent.payloadHash !== payloadHash) {
       throw new ConflictException("The webhook event identity is invalid.");
     }
-    if (webhookEvent.processedAt !== null) {
+    if (
+      webhookEvent.processedAt !== null &&
+      !isLegacyIgnoredRegistrationReason(webhookEvent.failureMessage)
+    ) {
       return { accepted: true, duplicate: true };
+    }
+    if (webhookEvent.processedAt !== null) {
+      await this.reactivateLegacyIgnoredRegistration(
+        client,
+        webhookEvent.id,
+        pendingRegistration,
+      );
     }
 
     if (call === null || call.runId === null) {
-      await this.markIgnored(
+      await this.markPendingRegistration(
         client,
         webhookEvent.id,
-        call === null
-          ? "No matching provider call was registered."
-          : "The matching call is not attached to a negotiation run.",
+        pendingRegistration,
       );
+
+      // Closing half of the registration race: if the call committed after
+      // the first lookup, process it here. Otherwise the call-placement worker
+      // will find this durable marker after committing the provider call ID.
+      call = await this.findCall(client, provider, event.providerCallId);
+    }
+
+    if (call === null || call.runId === null) {
       return { accepted: true, duplicate: false };
     }
 
@@ -234,7 +267,11 @@ export class ElevenLabsWebhookService {
 
     try {
       await client.webhookEvent.update({
-        data: { failureMessage: null, processedAt: new Date() },
+        data: {
+          failureMessage: null,
+          jobId: call.jobId,
+          processedAt: new Date(),
+        },
         where: { id: webhookEvent.id },
       });
     } catch (error) {
@@ -273,7 +310,9 @@ export class ElevenLabsWebhookService {
     event: VerifiedCallEvent,
     payloadHash: string,
     jobId: string | undefined,
+    pendingRegistration: string,
   ): Promise<{
+    readonly failureMessage: string | null;
     readonly id: string;
     readonly payloadHash: string;
     readonly processedAt: Date | null;
@@ -283,11 +322,17 @@ export class ElevenLabsWebhookService {
         create: {
           eventType: `call.${event.status}`,
           ...(jobId === undefined ? {} : { jobId }),
+          failureMessage: pendingRegistration,
           payloadHash,
           provider,
           providerEventId: event.eventId,
         },
-        select: { id: true, payloadHash: true, processedAt: true },
+        select: {
+          failureMessage: true,
+          id: true,
+          payloadHash: true,
+          processedAt: true,
+        },
         update: {},
         where: {
           provider_providerEventId: {
@@ -377,15 +422,37 @@ export class ElevenLabsWebhookService {
     }
   }
 
-  private async markIgnored(
+  private async markPendingRegistration(
     client: DatabaseClient,
     id: string,
-    reason: string,
+    pendingRegistration: string,
   ): Promise<void> {
     try {
-      await client.webhookEvent.update({
-        data: { failureMessage: reason, processedAt: new Date() },
-        where: { id },
+      await client.webhookEvent.updateMany({
+        data: { failureMessage: pendingRegistration },
+        where: { id, processedAt: null },
+      });
+    } catch (error) {
+      this.logInfrastructureFailure("database", error);
+      throw new ServiceUnavailableException(
+        "Webhook processing is temporarily unavailable.",
+      );
+    }
+  }
+
+  private async reactivateLegacyIgnoredRegistration(
+    client: DatabaseClient,
+    id: string,
+    pendingRegistration: string,
+  ): Promise<void> {
+    try {
+      await client.webhookEvent.updateMany({
+        data: { failureMessage: pendingRegistration, processedAt: null },
+        where: {
+          failureMessage: { in: [...legacyIgnoredRegistrationReasons] },
+          id,
+          processedAt: { not: null },
+        },
       });
     } catch (error) {
       this.logInfrastructureFailure("database", error);
