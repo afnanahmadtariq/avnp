@@ -121,6 +121,7 @@ function currentRunQuotes(run: RunRecord): RunQuoteRecord[] {
 }
 
 const activeRunStatuses = [
+  "DRAFT",
   "QUEUED",
   "DISCOVERING",
   "CALLING",
@@ -133,6 +134,8 @@ const terminalRunStatuses = new Set<string>([
   "FAILED",
   "PARTIALLY_COMPLETED",
 ]);
+const restartableRunStatuses = ["CANCELLED", "FAILED"] as const;
+const selectableCandidateStatuses = ["DISCOVERED", "SHORTLISTED"] as const;
 const reportReadyRunStatuses = new Set<string>([
   "COMPLETED",
   "PARTIALLY_COMPLETED",
@@ -304,6 +307,26 @@ function transcriptExtractionSettled(value: unknown): boolean {
   return (
     extraction !== undefined &&
     ["completed", "failed", "skipped"].includes(extraction)
+  );
+}
+
+function terminalCallIsSettled(call: {
+  readonly providerCallId: string | null;
+  readonly status: string;
+  readonly structuredOutcome: unknown;
+}): boolean {
+  if (["COMPLETED", "FAILED"].includes(call.status)) return true;
+  if (call.status === "QUEUED" && call.providerCallId === null) return true;
+  if (call.status !== "CANCELLED") return false;
+  if (asString(asRecord(call.structuredOutcome).outcome) === "cancelled") {
+    return true;
+  }
+  if (call.providerCallId === null) return true;
+
+  return (
+    asString(
+      asRecord(call.structuredOutcome).providerCancellationCompletedAt,
+    ) !== undefined
   );
 }
 
@@ -815,7 +838,44 @@ export class ProductService {
   }
 
   async getCandidates(publicId: string): Promise<unknown> {
-    const job = await this.findOwnedJob(publicId);
+    let job = await this.findOwnedJob(publicId);
+    const latestRun = job.runs[0];
+    if (
+      latestRun !== undefined &&
+      restartableRunStatuses.includes(
+        latestRun.status as (typeof restartableRunStatuses)[number],
+      )
+    ) {
+      const released = await this.database.$transaction(async (transaction) => {
+        await transaction.$queryRaw(
+          Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${job.id}, 0))`,
+        );
+        const currentRun = await transaction.negotiationRun.findFirst({
+          orderBy: { createdAt: "desc" },
+          select: { id: true, status: true },
+          where: { jobId: job.id },
+        });
+        if (
+          currentRun === null ||
+          !restartableRunStatuses.includes(
+            currentRun.status as (typeof restartableRunStatuses)[number],
+          )
+        ) {
+          return 0;
+        }
+        return this.releaseRestartableCandidates(transaction, {
+          jobId: job.id,
+          runId: currentRun.id,
+        });
+      });
+      if (released > 0) {
+        const refreshed = await this.database.job.findUnique({
+          include: jobInclude,
+          where: { id: job.id },
+        });
+        if (refreshed !== null) job = refreshed;
+      }
+    }
 
     return {
       items: job.candidates.map((candidate) => {
@@ -900,11 +960,6 @@ export class ProductService {
           "Every selected business must have a callable E.164 phone number.",
       });
     }
-
-    await this.database.jobBusiness.updateMany({
-      data: { status: "SHORTLISTED" },
-      where: { businessId: { in: selectedIds }, jobId: job.id },
-    });
 
     const businessIds = selectedCandidates.map(
       (candidate) => candidate.businessId,
@@ -1202,6 +1257,11 @@ export class ProductService {
       await transaction.job.update({
         data: { status: "CANCELLED" },
         where: { id: run.jobId },
+      });
+
+      await this.releaseRestartableCandidates(transaction, {
+        jobId: run.jobId,
+        runId: run.id,
       });
 
       if (this.runtimeConfig.value.mode === "live") {
@@ -1778,6 +1838,118 @@ export class ProductService {
           `Negotiation run ${concurrentRun.id} is already active for this request.`,
         );
       }
+      const [currentJob, currentVersion, latestVersionRun] = await Promise.all([
+        transaction.job.findUnique({
+          select: {
+            confirmedAt: true,
+            specification: true,
+            status: true,
+          },
+          where: { id: jobId },
+        }),
+        transaction.jobSpecificationVersion.findUnique({
+          select: {
+            confirmedAt: true,
+            jobId: true,
+            specification: true,
+          },
+          where: { id: specificationVersionId },
+        }),
+        transaction.negotiationRun.findFirst({
+          orderBy: { createdAt: "desc" },
+          select: { id: true, status: true },
+          where: { jobId, specificationVersionId },
+        }),
+      ]);
+      if (
+        currentJob === null ||
+        currentVersion === null ||
+        currentVersion.jobId !== jobId ||
+        currentJob.confirmedAt === null ||
+        currentJob.confirmedAt.getTime() !==
+          currentVersion.confirmedAt.getTime() ||
+        !sameSpecification(
+          currentJob.specification,
+          currentVersion.specification,
+        )
+      ) {
+        throw new ConflictException(
+          "Confirm the current specification before starting calls.",
+        );
+      }
+      if (
+        latestVersionRun !== null &&
+        ["COMPLETED", "PARTIALLY_COMPLETED"].includes(latestVersionRun.status)
+      ) {
+        throw new ConflictException(
+          "This confirmed brief already has a completed negotiation run.",
+        );
+      }
+      if (latestVersionRun === null && currentJob.status !== "READY") {
+        throw new ConflictException(
+          `Calls cannot start while this request is ${statusName(currentJob.status)}.`,
+        );
+      }
+      if (
+        latestVersionRun !== null &&
+        !restartableRunStatuses.includes(
+          latestVersionRun.status as (typeof restartableRunStatuses)[number],
+        )
+      ) {
+        throw new ConflictException(
+          `Run ${latestVersionRun.id} cannot be restarted from ${statusName(latestVersionRun.status)}.`,
+        );
+      }
+      if (latestVersionRun !== null) {
+        await this.releaseRestartableCandidates(transaction, {
+          jobId,
+          runId: latestVersionRun.id,
+        });
+      }
+      const currentCandidates = await transaction.jobBusiness.findMany({
+        include: { business: true },
+        where: { businessId: { in: [...businessIds] }, jobId },
+      });
+      if (currentCandidates.length !== businessIds.length) {
+        throw new BadRequestException(
+          "Every selected business must belong to this job's discovered candidates.",
+        );
+      }
+      const ineligibleCandidates = currentCandidates.filter(
+        (candidate) =>
+          !selectableCandidateStatuses.includes(
+            candidate.status as (typeof selectableCandidateStatuses)[number],
+          ),
+      );
+      if (ineligibleCandidates.length > 0) {
+        const cancellationPending = ineligibleCandidates.some(
+          (candidate) => candidate.status === "CONTACTING",
+        );
+        throw new ConflictException({
+          businessIds: ineligibleCandidates.map(
+            (candidate) => candidate.businessId,
+          ),
+          error: cancellationPending
+            ? "previous_calls_finalizing"
+            : "ineligible_businesses",
+          message: cancellationPending
+            ? "Previous calls are still being finalized. Try again after cancellation completes."
+            : "One or more selected businesses are no longer eligible for this run.",
+        });
+      }
+      const uncallableCandidates = currentCandidates.filter(
+        (candidate) => profilePhone(candidate.business.phone) === null,
+      );
+      if (uncallableCandidates.length > 0) {
+        throw new BadRequestException({
+          businessIds: uncallableCandidates.map(
+            (candidate) => candidate.businessId,
+          ),
+          error: "uncallable_businesses",
+          message:
+            "Every selected business must have a callable E.164 phone number.",
+        });
+      }
       const createdRun = await transaction.negotiationRun.create({
         data: {
           aiDisclosureAcknowledgedAt: consentedAt,
@@ -1855,7 +2027,7 @@ export class ProductService {
         where: { businessId: { in: [...businessIds] }, jobId },
       });
       await transaction.job.update({
-        data: { status: "CALLING" },
+        data: { completedAt: null, status: "CALLING" },
         where: { id: jobId },
       });
       return createdRun;
@@ -1863,6 +2035,52 @@ export class ProductService {
 
     await this.outbox.publishPending(run.id);
     return run;
+  }
+
+  private async releaseRestartableCandidates(
+    transaction: Prisma.TransactionClient,
+    input: { readonly jobId: string; readonly runId: string },
+  ): Promise<number> {
+    const [negotiations, calls] = await Promise.all([
+      transaction.negotiation.findMany({
+        select: { businessId: true },
+        where: { jobId: input.jobId, runId: input.runId },
+      }),
+      transaction.call.findMany({
+        select: {
+          businessId: true,
+          providerCallId: true,
+          status: true,
+          structuredOutcome: true,
+        },
+        where: { jobId: input.jobId, runId: input.runId },
+      }),
+    ]);
+    const callsByBusiness = new Map<string, typeof calls>();
+    for (const call of calls) {
+      const businessCalls = callsByBusiness.get(call.businessId) ?? [];
+      businessCalls.push(call);
+      callsByBusiness.set(call.businessId, businessCalls);
+    }
+    const releasableBusinessIds = [
+      ...new Set(negotiations.map((negotiation) => negotiation.businessId)),
+    ].filter((businessId) => {
+      const businessCalls = callsByBusiness.get(businessId) ?? [];
+      return (
+        businessCalls.length === 0 || businessCalls.every(terminalCallIsSettled)
+      );
+    });
+    if (releasableBusinessIds.length === 0) return 0;
+
+    const released = await transaction.jobBusiness.updateMany({
+      data: { status: "SHORTLISTED" },
+      where: {
+        businessId: { in: releasableBusinessIds },
+        jobId: input.jobId,
+        status: "CONTACTING",
+      },
+    });
+    return released.count;
   }
 
   private async createOutboxEvent<Name extends QueueJobName>(

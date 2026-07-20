@@ -49,15 +49,26 @@ describe("run cancellation provider reconciliation", () => {
       .mockResolvedValueOnce(cancelledRun);
     const cancelCalls = vi.fn(async () => ({ count: 1 }));
     const findRegisteredProviderCalls = vi.fn(async () => [
-      { id: "call-1", providerCallId: "conversation-1" },
+      {
+        businessId: "business-1",
+        id: "call-1",
+        providerCallId: "conversation-1",
+        status: "CANCELLED",
+        structuredOutcome: null,
+      },
     ]);
     const createOutbox = vi.fn(async () => ({ id: "outbox-1" }));
+    const releaseCandidates = vi.fn(async () => ({ count: 0 }));
     const transactionClient = {
       call: {
         findMany: findRegisteredProviderCalls,
         updateMany: cancelCalls,
       },
       job: { update: vi.fn(async () => ({ id: "job-1" })) },
+      jobBusiness: { updateMany: releaseCandidates },
+      negotiation: {
+        findMany: vi.fn(async () => [{ businessId: "business-1" }]),
+      },
       negotiationRun: {
         findUnique: vi.fn(async () => ({ correlationId: "correlation-1" })),
         updateMany: vi.fn(async () => ({ count: 1 })),
@@ -131,6 +142,7 @@ describe("run cancellation provider reconciliation", () => {
         }),
       }),
     );
+    expect(releaseCandidates).not.toHaveBeenCalled();
     expect(publishPending).toHaveBeenCalledWith("run-1");
   });
 
